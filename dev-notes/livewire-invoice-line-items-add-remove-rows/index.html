@@ -1,0 +1,304 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Livewire Invoice Line Items: Add and Remove Rows With Live Totals (and Why the Wrong Row Gets Deleted)</title>
+<meta name="description" content="A checklist for a Livewire invoice line-item editor: one array of rows, stable wire:key values, live totals, tax-inclusive vs exclusive math in integer cents, and server-side validation.">
+<link rel="canonical" href="https://strataface.github.io/dev-notes/livewire-invoice-line-items-add-remove-rows/">
+<style>
+body{font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;max-width:760px;margin:2.5rem auto;padding:0 1.25rem;line-height:1.65;color:#222}
+a{color:#1a5fb4}nav.crumbs{font-size:.9rem;color:#555;margin-bottom:1.5rem}h1{line-height:1.25}h2{margin-top:2.2rem}h3{margin-top:1.6rem}
+p.lead{color:#555;margin-top:0}li{margin:.3rem 0}
+pre{background:#f6f8fa;border:1px solid #e1e4e8;border-radius:6px;padding:.9rem 1rem;overflow-x:auto;font-size:.88rem;line-height:1.45}
+code{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;background:#f6f8fa;padding:.1em .3em;border-radius:4px;font-size:.92em}pre code{background:none;padding:0}
+table{border-collapse:collapse;width:100%;margin:1rem 0;font-size:.93rem;display:block;overflow-x:auto}th,td{border:1px solid #d0d7de;padding:.45rem .6rem;text-align:left;vertical-align:top}th{background:#f6f8fa}
+footer{margin-top:3rem;padding-top:1rem;border-top:1px solid #e1e4e8;font-size:.9rem;color:#555}
+</style>
+</head>
+<body>
+<nav class="crumbs"><a href="/">Strataface</a> › <a href="/dev-notes/">Dev Notes</a> › Livewire Invoice Line Items: Add and Remove Rows With Live Totals (and Why the Wrong Row Gets Deleted)</nav>
+<article>
+<h1>Livewire Invoice Line Items: Add and Remove Rows With Live Totals (and Why the Wrong Row Gets Deleted)</h1>
+<h1>Livewire Invoice Line Items: Add and Remove Rows With Live Totals (and Why the Wrong Row Gets Deleted)</h1>
+<p>An invoice form where you can add a row, remove a row, type a quantity and price, and see the subtotal and tax update looks like a 20-minute job in Livewire. In practice it is where a lot of Livewire questions come from: totals that don't update, totals that keep growing, and the classic one, where you click "remove" on row 1 and the inputs of row 2 now show the wrong values.</p>
+<p>This checklist builds the editor in a way that avoids those problems. The code is written for Livewire v3 (attribute syntax such as <code>#[Computed]</code>), Laravel 10+ and PHP 8.2+.</p>
+<h2>1. Keep each line as one row in one array</h2>
+<p>A common first attempt uses parallel arrays: <code>qty.0</code>, <code>price.0</code>, <code>name.0</code>, <code>qty.1</code>, … That makes adding, removing and summing rows painful, because every operation has to touch several arrays and keep them in sync.</p>
+<p>Use one array where each element is a complete line:</p>
+<pre><code class="language-php">public array $lines = [
+    // 'l01jab...' =&gt; ['description' =&gt; '', 'quantity' =&gt; '1', 'unit_price' =&gt; '0.00', 'taxable' =&gt; true],
+];
+</code></pre>
+<p>Each line then has everything needed to compute its own total, and the invoice total is a simple loop over <code>$lines</code>.</p>
+<h2>2. Give every row a stable ID and use it everywhere</h2>
+<p>Livewire's documentation says that inside a <code>@foreach</code> loop "you must add a unique wire:key attribute to the root element rendered by the loop", otherwise it cannot match old elements to new ones between requests.</p>
+<p>The less obvious part is that <strong><code>wire:key</code>, <code>wire:model</code> and <code>wire:click</code> must all address the row the same way.</strong> A Livewire maintainer explained this in a GitHub discussion: when <code>wire:key</code> uses the row's ID but <code>wire:model="lines.{{ $index }}.quantity"</code> and <code>wire:click="remove({{ $index }})"</code> use the array index, re-indexing the array with <code>array_values()</code> after a delete shifts the indexes while the keyed elements are preserved. The inputs and remove buttons can then point at the wrong rows.</p>
+<p>Two consistent options exist:</p>
+<ul>
+<li><strong>Index everywhere:</strong> <code>wire:key="{{ $index }}"</code>, <code>wire:model="lines.{{ $index }}…"</code>, <code>remove({{ $index }})</code>, and re-index after delete.</li>
+<li><strong>ID everywhere (used below):</strong> store rows in an associative array keyed by a stable ID, use that ID for the key, the model path and the action, and simply <code>unset()</code> the row without re-indexing.</li>
+</ul>
+<p>The second option keeps a row's DOM element, focus and any attached JavaScript with the row you think it belongs to.</p>
+<p>Note: the GitHub report was filed against Livewire 4.1.3. The explanation is about how keys and model paths relate, so the same rule is a safe default on Livewire 3, but test delete-in-the-middle on your version.</p>
+<p>Use a non-numeric string key (for example a prefix plus a ULID), so the ID can never be mistaken for a position in the array.</p>
+<h2>3. Add and remove rows</h2>
+<pre><code class="language-php">&lt;?php
+
+namespace App\Livewire;
+
+use App\Support\InvoiceMath;
+use Illuminate\Support\Str;
+use Livewire\Attributes\Computed;
+use Livewire\Component;
+
+class InvoiceLines extends Component
+{
+    /** @var array&lt;string, array{description: string, quantity: string, unit_price: string, taxable: bool}&gt; */
+    public array $lines = [];
+
+    public string $taxRate = '20';
+
+    public bool $taxInclusive = false;
+
+    public function mount(): void
+    {
+        $this-&gt;addLine();
+    }
+
+    public function addLine(): void
+    {
+        $id = 'l' . Str::lower((string) Str::ulid());
+
+        $this-&gt;lines[$id] = [
+            'description' =&gt; '',
+            'quantity' =&gt; '1',
+            'unit_price' =&gt; '0.00',
+            'taxable' =&gt; true,
+        ];
+    }
+
+    public function removeLine(string $id): void
+    {
+        unset($this-&gt;lines[$id]);
+
+        if ($this-&gt;lines === []) {
+            $this-&gt;addLine(); // keep one empty row so the form never disappears
+        }
+    }
+
+    #[Computed]
+    public function totals(): array
+    {
+        return InvoiceMath::summarize($this-&gt;lines, (float) $this-&gt;taxRate, $this-&gt;taxInclusive);
+    }
+
+    public function render()
+    {
+        return view('livewire.invoice-lines');
+    }
+}
+</code></pre>
+<p>And the Blade view:</p>
+<pre><code class="language-blade">&lt;div&gt;
+    &lt;table&gt;
+        @foreach ($lines as $id =&gt; $line)
+            &lt;tr wire:key=&quot;line-{{ $id }}&quot;&gt;
+                &lt;td&gt;&lt;input type=&quot;text&quot; wire:model.blur=&quot;lines.{{ $id }}.description&quot;&gt;&lt;/td&gt;
+                &lt;td&gt;&lt;input type=&quot;number&quot; min=&quot;0&quot; step=&quot;any&quot; wire:model.live.debounce.300ms=&quot;lines.{{ $id }}.quantity&quot;&gt;&lt;/td&gt;
+                &lt;td&gt;&lt;input type=&quot;number&quot; min=&quot;0&quot; step=&quot;0.01&quot; wire:model.live.debounce.300ms=&quot;lines.{{ $id }}.unit_price&quot;&gt;&lt;/td&gt;
+                &lt;td&gt;&lt;input type=&quot;checkbox&quot; wire:model.live=&quot;lines.{{ $id }}.taxable&quot;&gt;&lt;/td&gt;
+                &lt;td&gt;{{ number_format(\App\Support\InvoiceMath::lineCents($line) / 100, 2) }}&lt;/td&gt;
+                &lt;td&gt;&lt;button type=&quot;button&quot; wire:click=&quot;removeLine('{{ $id }}')&quot;&gt;Remove&lt;/button&gt;&lt;/td&gt;
+            &lt;/tr&gt;
+        @endforeach
+    &lt;/table&gt;
+
+    &lt;button type=&quot;button&quot; wire:click=&quot;addLine&quot;&gt;Add line&lt;/button&gt;
+
+    &lt;dl&gt;
+        &lt;dt&gt;Net&lt;/dt&gt;&lt;dd&gt;{{ number_format($this-&gt;totals['net'] / 100, 2) }}&lt;/dd&gt;
+        &lt;dt&gt;Tax&lt;/dt&gt;&lt;dd&gt;{{ number_format($this-&gt;totals['tax'] / 100, 2) }}&lt;/dd&gt;
+        &lt;dt&gt;Total&lt;/dt&gt;&lt;dd&gt;{{ number_format($this-&gt;totals['total'] / 100, 2) }}&lt;/dd&gt;
+    &lt;/dl&gt;
+&lt;/div&gt;
+</code></pre>
+<p><code>type="button"</code> on the buttons matters if the table sits inside a <code>&lt;form wire:submit&gt;</code>: a plain <code>&lt;button&gt;</code> inside a form submits it.</p>
+<h2>4. Make the totals actually update</h2>
+<p>If the subtotal only changes when you click a button, check the binding. In Livewire 3, plain <code>wire:model</code> is deferred: the documentation says Livewire "will only send a network request when an action is performed (like wire:click or wire:submit), NOT when a wire:model input is updated".</p>
+<ul>
+<li>Use <code>wire:model.live</code> for fields that drive the totals (quantity, price, the taxable checkbox). By default <code>.live</code> adds a 150 ms debounce; <code>.live.debounce.300ms</code> waits a little longer while the user types.</li>
+<li>Use <code>wire:model.blur</code> for text fields such as the description, so typing a long description doesn't send a request per keystroke.</li>
+</ul>
+<h2>5. Compute totals; don't accumulate them</h2>
+<p>Another common bug: a <code>calculateTotal()</code> method that does <code>$this-&gt;total += …</code> inside an <code>updated</code> hook. Every change adds to the previous value instead of starting from zero, so the total keeps growing.</p>
+<p>Derive totals from <code>$lines</code> on every render instead. A <code>#[Computed]</code> method (as above) is a good fit. Livewire's docs point out that computed properties are only cached for a single request, so the value is recalculated after each update and never goes stale between requests.</p>
+<p>If you need to react to one field changing (for example, filling the unit price when a product is chosen), use the array form of the <code>updated</code> hook. Livewire passes the changed key as a second argument:</p>
+<pre><code class="language-php">public function updatedLines($value, $key): void
+{
+    // $key looks like &quot;l01jab....unit_price&quot;
+    [$id, $field] = explode('.', $key, 2) + [null, null];
+
+    if ($field === 'quantity' &amp;&amp; (float) $value &lt; 0) {
+        $this-&gt;lines[$id]['quantity'] = '0';
+    }
+}
+</code></pre>
+<p>Note: the docs say <code>$key</code> is <code>null</code> when the whole array is replaced instead of a single key, so guard for that case. The docs show a one-level example; dump <code>$key</code> once to confirm the format for nested fields on your version.</p>
+<h2>6. Do the money math in integer cents</h2>
+<p>Floats can't represent most decimal amounts exactly. In PHP, <code>0.1 + 0.2 == 0.3</code> is <code>false</code> (the sum is <code>0.30000000000000004</code>). Rounding to 2 decimals at the end usually hides this, but invoices are where "usually" causes trouble. Convert to integer cents once, do all sums in integers, and only format at display time:</p>
+<pre><code class="language-php">&lt;?php
+
+namespace App\Support;
+
+final class InvoiceMath
+{
+    public static function toCents(string|int|float $amount): int
+    {
+        return (int) round(((float) $amount) * 100);
+    }
+
+    public static function lineCents(array $line): int
+    {
+        return (int) round(((float) ($line['quantity'] ?? 0)) * self::toCents($line['unit_price'] ?? 0));
+    }
+
+    /** @return array{net: int, tax: int, total: int} */
+    public static function summarize(array $lines, float $ratePercent, bool $inclusive): array
+    {
+        $subtotal = 0;
+        $taxable = 0;
+
+        foreach ($lines as $line) {
+            $cents = self::lineCents($line);
+            $subtotal += $cents;
+            if (! empty($line['taxable'])) {
+                $taxable += $cents;
+            }
+        }
+
+        $rate = max(0.0, $ratePercent) / 100;
+
+        if ($inclusive) {
+            // Prices already contain tax: extract it.
+            $tax = (int) round($taxable - $taxable / (1 + $rate));
+
+            return ['net' =&gt; $subtotal - $tax, 'tax' =&gt; $tax, 'total' =&gt; $subtotal];
+        }
+
+        // Prices exclude tax: add it on top.
+        $tax = (int) round($taxable * $rate);
+
+        return ['net' =&gt; $subtotal, 'tax' =&gt; $tax, 'total' =&gt; $subtotal + $tax];
+    }
+}
+</code></pre>
+<p>Note: <code>toCents()</code> still goes through a float for the conversion, which is fine for ordinary two-decimal prices. For very large amounts or more than two decimals, parse the string yourself or use a money/decimal library.</p>
+<h2>7. Tax-inclusive vs tax-exclusive, with numbers</h2>
+<p>The two modes use different formulas, and mixing them up is a common source of "the total is off by a few cents" reports.</p>
+<ul>
+<li><strong>Tax-exclusive (prices are net):</strong> <code>tax = taxable × rate</code>, <code>total = subtotal + tax</code>.</li>
+<li><strong>Tax-inclusive (prices already include tax):</strong> <code>tax = taxable − taxable ÷ (1 + rate)</code>, <code>total = subtotal</code>.</li>
+</ul>
+<p>Example with a 20% rate: 2 × 49.99 (taxable) and 1 × 15.00 (not taxable). The <code>summarize()</code> function above gives:</p>
+<table>
+<thead>
+<tr>
+<th>Mode</th>
+<th>Net</th>
+<th>Tax</th>
+<th>Total</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Exclusive</td>
+<td>114.98</td>
+<td>20.00 (19.996 rounded)</td>
+<td>134.98</td>
+</tr>
+<tr>
+<td>Inclusive</td>
+<td>98.32</td>
+<td>16.66 (99.98 − 83.3166…)</td>
+<td>114.98</td>
+</tr>
+</tbody>
+</table>
+<p>The inclusive tax is not 20% of 99.98. It is the part of 99.98 that is tax: 99.98 ÷ 1.2 = 83.32 net for the taxable lines, so 16.66 is tax. Adding the untaxed 15.00 gives the 98.32 net shown.</p>
+<p><strong>Per-line vs per-invoice rounding.</strong> Three lines of 0.99 at 7.5%: rounding the tax on each line gives 0.07 × 3 = 0.21; rounding once on the invoice total (2.97 × 7.5% = 0.22275) gives 0.22. Both methods are in use. Which one you must use depends on your jurisdiction and your accounting or tax provider.</p>
+<p>Note: this is display math. Rates, exemptions, reverse charge and which rounding rule applies are tax questions. Take them from your tax engine, merchant of record or accountant, not from the UI.</p>
+<h2>8. Validate and recalculate on the server before saving</h2>
+<p>Livewire's documentation is explicit: "always treat public properties as user input". Anyone can change <code>$lines</code>, the tax rate or the inclusive flag from the browser's devtools, so:</p>
+<ul>
+<li>Validate the array with wildcard rules before saving:</li>
+</ul>
+<p><code>php
+  $this-&gt;validate([
+      'lines' =&gt; ['required', 'array', 'min:1'],
+      'lines.*.description' =&gt; ['required', 'string', 'max:255'],
+      'lines.*.quantity' =&gt; ['required', 'numeric', 'min:0'],
+      'lines.*.unit_price' =&gt; ['required', 'numeric', 'min:0'],
+      'lines.*.taxable' =&gt; ['boolean'],
+  ]);</code></p>
+<ul>
+<li>Recompute the totals on the server with the same <code>InvoiceMath</code> and store those. Never save a total that came from the browser.</li>
+<li>Load the tax rate from your own settings or tax service at save time instead of trusting <code>$taxRate</code>.</li>
+<li>If the component holds a record ID (for example <code>$invoiceId</code>), mark it with <code>#[Locked]</code> so it can't be changed from the client, and still authorize the user against it.</li>
+</ul>
+<h2>Quick symptom table</h2>
+<table>
+<thead>
+<tr>
+<th>Symptom</th>
+<th>Likely cause</th>
+<th>Fix</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Removing row 1 makes row 2 show wrong values</td>
+<td><code>wire:key</code> uses an ID but <code>wire:model</code>/<code>wire:click</code> use the index</td>
+<td>Address rows the same way everywhere (step 2)</td>
+</tr>
+<tr>
+<td>Totals update only after clicking something</td>
+<td>Plain <code>wire:model</code> is deferred</td>
+<td><code>wire:model.live</code> on quantity/price (step 4)</td>
+</tr>
+<tr>
+<td>Total keeps growing with each edit</td>
+<td><code>+=</code> into a stored total</td>
+<td>Computed totals from <code>$lines</code> (step 5)</td>
+</tr>
+<tr>
+<td>Total off by 0.01</td>
+<td>Float sums or mixed rounding rules</td>
+<td>Integer cents; pick one rounding rule (steps 6–7)</td>
+</tr>
+<tr>
+<td>"Remove" submits the form</td>
+<td><code>&lt;button&gt;</code> inside a form defaults to submit</td>
+<td><code>type="button"</code> (step 3)</td>
+</tr>
+</tbody>
+</table>
+<h2>If you'd rather not build the UI yourself</h2>
+<p>If you want these pieces ready-made, <a href="https://kendeepp.gumroad.com/l/qrzrsa?utm_source=seo&amp;utm_campaign=lineitems">Billstack</a> ($29) is a set of five Livewire components for billing portals. Its InvoiceLineEditor (add / remove / reorder lines, qty × unit, live subtotal) handles the problem from step 2: since v1.0.1, rows are stored under a stable row key, and <code>wire:key</code>, <code>wire:model</code>, remove, move up and move down all use that key, with no re-indexing after a delete. The product page lists v1.0.1 as fixing invoice lines that showed the wrong values after a row was deleted.</p>
+<p>The other four components are a TaxSummary (taxable base, rate, inclusive / exclusive toggle), a PaymentStatusBadge, a filterable CustomerInvoiceTable and RecurringScheduleFields. The package installs as a Composer path repository and comes with Blade views, math helpers, an INSTALL guide, a local demo with fake data and a PHPUnit suite. It is UI only: no Stripe, Paddle or Lemon Squeezy integration, no tax engine or VAT compliance, no PDF or email, no multi-currency and no Filament resources. Listed requirements: PHP 8.2+, Laravel 10+, and Livewire 3 or 4. This article's examples are written for Livewire 3. Its built-in money helpers round to two decimals rather than working in integer cents, so step 8 (validate and recalculate on the server) still applies.</p>
+<h2>Sources</h2>
+<ul>
+<li>Livewire 3 docs, Components — "Adding wire:key to @foreach loops": https://livewire.laravel.com/docs/3.x/components</li>
+<li>Livewire 3 docs, Troubleshooting — component mismatches and wire:key: https://livewire.laravel.com/docs/3.x/troubleshooting</li>
+<li>Livewire discussion #9954, "Input is not set correctly after switching wire:model target" (maintainer answer on key/model addressing): https://github.com/livewire/livewire/discussions/9954</li>
+<li>Livewire 3 docs, wire:model — deferred updates, <code>.live</code>, <code>.blur</code>, debounce: https://livewire.laravel.com/docs/3.x/wire-model</li>
+<li>Livewire 3 docs, Computed properties — cached for a single request: https://livewire.laravel.com/docs/3.x/computed-properties</li>
+<li>Livewire 3 docs, Lifecycle hooks — <code>updated</code> hooks for arrays and <code>$key</code>: https://livewire.laravel.com/docs/3.x/lifecycle-hooks</li>
+<li>Livewire 3 docs, Properties — security concerns and <code>#[Locked]</code>: https://livewire.laravel.com/docs/3.x/properties</li>
+<li>Laravel docs, Validation — validating nested array input: https://laravel.com/docs/12.x/validation#validating-nested-array-input</li>
+<li>PHP manual, Floating point numbers (precision warning): https://www.php.net/manual/en/language.types.float.php</li>
+</ul>
+</article>
+<footer><a href="/">Strataface</a> · <a href="/spreadsheet-guides/">Spreadsheet Guides</a> · <a href="/dev-notes/">Dev Notes</a> · <a href="/blender-bake-guides/">Blender Bake Guides</a></footer>
+</body>
+</html>

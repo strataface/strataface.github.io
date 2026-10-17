@@ -1,3 +1,4 @@
 User-agent: *
 Allow: /
+Sitemap: https://strataface.github.io/sitemap.xml
 Sitemap: https://strataface.github.io/blender-bake-guides/sitemap.xml

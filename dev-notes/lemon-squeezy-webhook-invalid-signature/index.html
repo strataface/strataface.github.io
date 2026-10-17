@@ -1,0 +1,212 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Lemon Squeezy Webhook &quot;Invalid Signature&quot;? A Fix Checklist for Next.js and Express</title>
+<meta name="description" content="A checklist for fixing Lemon Squeezy webhook &quot;invalid signature&quot; errors in Next.js (App and Pages Router) and Express: raw body, secret, HMAC and retries.">
+<link rel="canonical" href="https://strataface.github.io/dev-notes/lemon-squeezy-webhook-invalid-signature/">
+<style>
+body{font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;max-width:760px;margin:2.5rem auto;padding:0 1.25rem;line-height:1.65;color:#222}
+a{color:#1a5fb4}nav.crumbs{font-size:.9rem;color:#555;margin-bottom:1.5rem}h1{line-height:1.25}h2{margin-top:2.2rem}h3{margin-top:1.6rem}
+p.lead{color:#555;margin-top:0}li{margin:.3rem 0}
+pre{background:#f6f8fa;border:1px solid #e1e4e8;border-radius:6px;padding:.9rem 1rem;overflow-x:auto;font-size:.88rem;line-height:1.45}
+code{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;background:#f6f8fa;padding:.1em .3em;border-radius:4px;font-size:.92em}pre code{background:none;padding:0}
+table{border-collapse:collapse;width:100%;margin:1rem 0;font-size:.93rem;display:block;overflow-x:auto}th,td{border:1px solid #d0d7de;padding:.45rem .6rem;text-align:left;vertical-align:top}th{background:#f6f8fa}
+footer{margin-top:3rem;padding-top:1rem;border-top:1px solid #e1e4e8;font-size:.9rem;color:#555}
+</style>
+</head>
+<body>
+<nav class="crumbs"><a href="/">Strataface</a> › <a href="/dev-notes/">Dev Notes</a> › Lemon Squeezy Webhook &quot;Invalid Signature&quot;? A Fix Checklist for Next.js and Express</nav>
+<article>
+<h1>Lemon Squeezy Webhook &quot;Invalid Signature&quot;? A Fix Checklist for Next.js and Express</h1>
+<p>Your Lemon Squeezy webhook arrives, but your check of the <code>X-Signature</code> header fails every time. In almost every public report of this, the code hashes something other than the exact bytes Lemon Squeezy sent. The usual culprit is <code>JSON.stringify(req.body)</code> after a JSON parser has already run. This checklist goes from the most common cause to the rarest, with working code for the Next.js App Router, the Next.js Pages Router and Express.</p>
+<h2>How the signature works</h2>
+<p>From the Lemon Squeezy docs:</p>
+<ul>
+<li>When you create a webhook, you choose a <strong>signing secret</strong> (normally a random string of 6 to 40 characters).</li>
+<li>Lemon Squeezy uses the secret to make "a hash of the payload" and sends it in the <code>X-Signature</code> header. The hash is an HMAC-SHA256 <strong>hex digest</strong>.</li>
+<li>You compute the same HMAC over the payload and compare.</li>
+<li>The request also carries <code>Content-Type: application/json</code> and an <code>X-Event-Name</code> header.</li>
+</ul>
+<p>So three things must match exactly: the <strong>bytes</strong> you hash, the <strong>secret</strong>, and the <strong>algorithm and encoding</strong>.</p>
+<p>Sources: <a href="https://docs.lemonsqueezy.com/help/webhooks/signing-requests">Signing Requests</a>, <a href="https://docs.lemonsqueezy.com/help/webhooks/webhook-requests">Webhook Requests</a>.</p>
+<h2>☐ 1. Are you hashing the raw body, not a re-serialised object?</h2>
+<p>This is the cause in most Stack Overflow questions about it. The broken pattern looks like this:</p>
+<pre><code class="language-js">app.post('/webhook', express.json(), (req, res) =&gt; {
+  const digest = crypto.createHmac('sha256', secret)
+    .update(JSON.stringify(req.body))   // ✗ not the bytes that were signed
+    .digest('hex');
+</code></pre>
+<p><code>JSON.stringify</code> of a parsed object doesn't give back the original text. Whitespace, key order and character escaping can all change. For example, <code>JSON.stringify</code> doesn't escape forward slashes, so a body that contains <code>https:\/\/...</code> comes back as <code>https://...</code>. Any changed byte gives a different HMAC.</p>
+<p>Fix: read the body as raw text or bytes, verify it, then <code>JSON.parse</code> that same string.</p>
+<h2>☐ 2. Read the raw body correctly for your framework</h2>
+<h3>Next.js App Router (<code>app/api/webhooks/lemonsqueezy/route.ts</code>)</h3>
+<pre><code class="language-ts">import crypto from &quot;node:crypto&quot;;
+
+export const runtime = &quot;nodejs&quot;;
+
+export async function POST(request: Request) {
+  const secret = process.env.LEMONSQUEEZY_WEBHOOK_SECRET;
+  if (!secret) return new Response(&quot;Webhook secret not set&quot;, { status: 500 });
+
+  const rawBody = await request.text();               // read once, as text
+  const header = request.headers.get(&quot;x-signature&quot;) ?? &quot;&quot;;
+
+  const expected = Buffer.from(
+    crypto.createHmac(&quot;sha256&quot;, secret).update(rawBody).digest(&quot;hex&quot;), &quot;hex&quot;);
+  const given = Buffer.from(header, &quot;hex&quot;);
+
+  if (given.length !== expected.length || !crypto.timingSafeEqual(given, expected)) {
+    return new Response(&quot;Invalid signature&quot;, { status: 401 });
+  }
+
+  const event = JSON.parse(rawBody);                  // parse the same string
+  // ... handle event.meta.event_name
+  return new Response(&quot;OK&quot;, { status: 200 });
+}
+</code></pre>
+<p>Don't call <code>request.json()</code> before <code>request.text()</code>. The body can only be read once. Lemon Squeezy's own Next.js guide uses this same <code>await request.text()</code> approach, and Next.js notes that Route Handlers don't need any bodyParser configuration.</p>
+<p>Sources: <a href="https://docs.lemonsqueezy.com/guides/tutorials/webhooks-nextjs">Receive Lemon Squeezy Webhooks in Next.js</a>, <a href="https://nextjs.org/docs/app/api-reference/file-conventions/route">Next.js route.js reference</a>.</p>
+<h3>Next.js Pages Router (<code>pages/api/...</code>)</h3>
+<p>API routes parse the body automatically. The Next.js docs say you can set <code>bodyParser</code> to <code>false</code> to consume the body as a stream, and they name webhook verification as one use case:</p>
+<pre><code class="language-ts">export const config = { api: { bodyParser: false } };
+
+export default async function handler(req, res) {
+  const chunks: Buffer[] = [];
+  for await (const chunk of req) chunks.push(typeof chunk === &quot;string&quot; ? Buffer.from(chunk) : chunk);
+  const rawBody = Buffer.concat(chunks);
+  // verify rawBody exactly as above, then JSON.parse(rawBody.toString(&quot;utf8&quot;))
+}
+</code></pre>
+<p>Source: <a href="https://nextjs.org/docs/pages/building-your-application/routing/api-routes">Next.js API Routes, custom config</a>.</p>
+<h3>Express</h3>
+<p>Use <code>express.raw</code> on the webhook route. It "parses incoming request payloads into a Buffer". Register that route <strong>before</strong> any global <code>app.use(express.json())</code>, so the JSON parser doesn't consume the body first:</p>
+<pre><code class="language-js">app.post('/webhooks/lemonsqueezy',
+  express.raw({ type: 'application/json' }),
+  (req, res) =&gt; {
+    const expected = Buffer.from(
+      crypto.createHmac('sha256', process.env.LEMONSQUEEZY_WEBHOOK_SECRET)
+        .update(req.body).digest('hex'), 'hex');
+    const given = Buffer.from(req.get('X-Signature') || '', 'hex');
+    if (given.length !== expected.length || !crypto.timingSafeEqual(given, expected)) {
+      return res.status(401).send('Invalid signature');
+    }
+    const event = JSON.parse(req.body.toString('utf8'));
+    res.sendStatus(200);
+  });
+
+app.use(express.json()); // the rest of your API
+</code></pre>
+<p>If you must keep a global <code>express.json()</code>, its <code>verify(req, res, buf)</code> option gives you "a Buffer of the raw request body". Save <code>buf</code> on <code>req</code> there and hash that.</p>
+<p>Source: <a href="https://expressjs.com/en/5x/api/express/">Express 5.x API, express.raw / express.json</a>.</p>
+<h2>☐ 3. Is it the right secret?</h2>
+<ul>
+<li>Use the <strong>signing secret you typed when creating that webhook</strong> in Settings › Webhooks. Your API key won't work.</li>
+<li>Lemon Squeezy keeps test-mode and live-mode webhooks separate: "a test mode webhook will only be triggered for test mode data and vice versa". If you set up a live webhook with a new secret, update the environment variable for that deployment.</li>
+<li>Check that the variable is actually loaded where the code runs. On many hosts, a changed environment variable only takes effect after a redeploy (Note: this depends on the host; check your host's docs). If the secret is <code>undefined</code>, <code>createHmac</code> throws before you get to compare anything.</li>
+<li>Watch for a stray space or newline when you paste the secret into an <code>.env</code> file or a hosting dashboard.</li>
+</ul>
+<p>Sources: <a href="https://docs.lemonsqueezy.com/help/webhooks">Webhooks</a>, <a href="https://docs.lemonsqueezy.com/help/webhooks/simulate-webhook-events">Simulate Webhook Events</a>.</p>
+<h2>☐ 4. Is it HMAC, and is the comparison sane?</h2>
+<ul>
+<li><strong>HMAC-SHA256, not plain SHA-256.</strong> One Stack Overflow case (C#) hashed payload + secret with plain SHA-256. It has to be an HMAC keyed with the secret.</li>
+<li><strong>Hex.</strong> The header is a hex digest. Compare hex with hex: decode both from hex as above, or compare the two hex strings as UTF-8 buffers like the docs example does. Don't compare base64 with hex.</li>
+<li><strong><code>timingSafeEqual</code> throws on different lengths.</strong> Node's docs: "An error is thrown if a and b have different byte lengths." Check the lengths first (as in the code above), so a missing or short header returns 401 instead of a 500.</li>
+</ul>
+<p>Source: <a href="https://nodejs.org/api/crypto.html">Node.js crypto.timingSafeEqual</a>.</p>
+<h2>☐ 5. Is something between Lemon Squeezy and your code changing the body?</h2>
+<p>If steps 1–4 are right and it still fails, look at what sits in front of the handler: a proxy, a serverless adapter, middleware that logs and re-writes the body, or a framework that decodes the body before your code sees it.</p>
+<p>Note: in GitHub issue lmsqueezy/lemonsqueezy.js#115, one user testing with Express, Next.js and SolidStart reported that the text body they received had lost the backslashes in escaped URLs (<code>\/</code>), which broke the check. They worked around it by putting the backslashes back. A contributor to the repository advised reading the raw body as bytes instead. We haven't been able to verify which setups cause this. Treat it as a last resort, and prefer fixing the raw-body reading.</p>
+<p>Source: <a href="https://github.com/lmsqueezy/lemonsqueezy.js/issues/115">lmsqueezy/lemonsqueezy.js issue #115</a>.</p>
+<h2>☐ 6. Debug without leaking secrets</h2>
+<ul>
+<li>Log the <strong>length</strong> of the raw body, the received header and your computed hex digest. Never log the secret.</li>
+<li>Use the webhook log in Lemon Squeezy. The docs say recent webhooks are logged on the webhooks settings page with "the full payloads of each request", and you can resend them from there.</li>
+<li>In test mode you can simulate events for a test order or subscription from the Lemon Squeezy admin, for example <code>subscription_created</code> or <code>order_created</code>.</li>
+</ul>
+<p>Sources: <a href="https://docs.lemonsqueezy.com/help/webhooks">Webhooks</a>, <a href="https://docs.lemonsqueezy.com/help/webhooks/simulate-webhook-events">Simulate Webhook Events</a>.</p>
+<h2>☐ 7. After it passes: retries and duplicates</h2>
+<p>The docs say to return a <strong>200</strong> to show the webhook was captured. Any other status is retried "up to three more times using an exponential backoff strategy (e.g. 5 secs, 25 secs, 125 secs)". That has two consequences:</p>
+<ul>
+<li>Return a non-200 only when you really want a retry, for example when your database is down.</li>
+<li>Expect the same event more than once, and make the handler safe to repeat. Record an id or a hash of each raw body you've processed, and skip repeats.</li>
+</ul>
+<p>Source: <a href="https://docs.lemonsqueezy.com/help/webhooks/webhook-requests">Webhook Requests</a>.</p>
+<h2>Symptom table</h2>
+<table>
+<thead>
+<tr>
+<th>Symptom</th>
+<th>Most likely cause</th>
+<th>Step</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Fails on every event, locally and in production</td>
+<td>Hashing <code>JSON.stringify(req.body)</code></td>
+<td>1, 2</td>
+</tr>
+<tr>
+<td>Works locally, fails after deploy</td>
+<td>Secret not set or different in that environment</td>
+<td>3</td>
+</tr>
+<tr>
+<td>Works in test mode, fails in live mode</td>
+<td>Live webhook has its own secret</td>
+<td>3</td>
+</tr>
+<tr>
+<td>500 error instead of 401</td>
+<td><code>timingSafeEqual</code> length error, or <code>createHmac</code> with an undefined secret</td>
+<td>3, 4</td>
+</tr>
+<tr>
+<td>Fails only for some events</td>
+<td>Body changed in transit; escaped characters</td>
+<td>5</td>
+</tr>
+<tr>
+<td>Same order processed twice</td>
+<td>Retries or resends without de-duplication</td>
+<td>7</td>
+</tr>
+</tbody>
+</table>
+<h2>If you're building subscriptions with license keys on Lemon Squeezy</h2>
+<p>If your app sells licensed software through Lemon Squeezy, <a href="https://kendeepp.gumroad.com/l/pdaeoo?utm_source=seo&amp;utm_campaign=lswebhook">Rindstack</a> is a Next.js 15 starter with this webhook path already wired up. Its product page lists:</p>
+<ul>
+<li>A webhook handler that verifies <code>X-Signature</code> (HMAC-SHA256 over the raw body).</li>
+<li>Skipping of duplicate deliveries, and late out-of-order events that don't overwrite newer state.</li>
+<li>Lemon Squeezy hosted checkout with your user id attached.</li>
+<li>License keys issued by the webhook, with per-plan device limits, verify/deactivate APIs and a grace period after cancellation.</li>
+<li>A Chrome extension (MV3) example that unlocks with the key.</li>
+<li>English, Chinese and Japanese UI.</li>
+</ul>
+<p>It costs $99 one-time (Personal) or $199 (Team).</p>
+<p>Its listed limits:</p>
+<ul>
+<li>No Stripe, teams, blog, transactional email or admin panel.</li>
+<li>Lemon Squeezy was mocked in its tests, and the starter hasn't yet been run against a live Lemon Squeezy store. Its guide asks you to do one test-mode purchase before launch.</li>
+<li>The Vercel deployment guide hasn't been deployed by its author.</li>
+</ul>
+<h2>Sources</h2>
+<ul>
+<li>Lemon Squeezy Docs, Webhooks: https://docs.lemonsqueezy.com/help/webhooks</li>
+<li>Lemon Squeezy Docs, Signing Requests: https://docs.lemonsqueezy.com/help/webhooks/signing-requests</li>
+<li>Lemon Squeezy Docs, Webhook Requests: https://docs.lemonsqueezy.com/help/webhooks/webhook-requests</li>
+<li>Lemon Squeezy Docs, Simulate Webhook Events: https://docs.lemonsqueezy.com/help/webhooks/simulate-webhook-events</li>
+<li>Lemon Squeezy Guides, Receive Lemon Squeezy Webhooks in Next.js: https://docs.lemonsqueezy.com/guides/tutorials/webhooks-nextjs</li>
+<li>Next.js Docs, route.js: https://nextjs.org/docs/app/api-reference/file-conventions/route</li>
+<li>Next.js Docs, API Routes: https://nextjs.org/docs/pages/building-your-application/routing/api-routes</li>
+<li>Express 5.x API, express(): https://expressjs.com/en/5x/api/express/</li>
+<li>Node.js Docs, crypto.timingSafeEqual: https://nodejs.org/api/crypto.html</li>
+<li>GitHub, lmsqueezy/lemonsqueezy.js issue #115: https://github.com/lmsqueezy/lemonsqueezy.js/issues/115</li>
+</ul>
+<p>Note: code samples follow the current docs listed above. Framework defaults change between versions, so check the docs for the version you use.</p>
+</article>
+<footer><a href="/">Strataface</a> · <a href="/spreadsheet-guides/">Spreadsheet Guides</a> · <a href="/dev-notes/">Dev Notes</a> · <a href="/blender-bake-guides/">Blender Bake Guides</a></footer>
+</body>
+</html>

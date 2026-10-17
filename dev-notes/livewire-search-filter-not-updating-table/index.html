@@ -1,0 +1,187 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Livewire Search or Filter Not Updating the Table? wire:model.live, Debounce, Pagination and wire:key</title>
+<meta name="description" content="Why a Livewire 3 or 4 search box or status filter does not update the list: deferred wire:model, filtering in mount, pagination not reset, missing wire:key.">
+<link rel="canonical" href="https://strataface.github.io/dev-notes/livewire-search-filter-not-updating-table/">
+<style>
+body{font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;max-width:760px;margin:2.5rem auto;padding:0 1.25rem;line-height:1.65;color:#222}
+a{color:#1a5fb4}nav.crumbs{font-size:.9rem;color:#555;margin-bottom:1.5rem}h1{line-height:1.25}h2{margin-top:2.2rem}h3{margin-top:1.6rem}
+p.lead{color:#555;margin-top:0}li{margin:.3rem 0}
+pre{background:#f6f8fa;border:1px solid #e1e4e8;border-radius:6px;padding:.9rem 1rem;overflow-x:auto;font-size:.88rem;line-height:1.45}
+code{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;background:#f6f8fa;padding:.1em .3em;border-radius:4px;font-size:.92em}pre code{background:none;padding:0}
+table{border-collapse:collapse;width:100%;margin:1rem 0;font-size:.93rem;display:block;overflow-x:auto}th,td{border:1px solid #d0d7de;padding:.45rem .6rem;text-align:left;vertical-align:top}th{background:#f6f8fa}
+footer{margin-top:3rem;padding-top:1rem;border-top:1px solid #e1e4e8;font-size:.9rem;color:#555}
+</style>
+</head>
+<body>
+<nav class="crumbs"><a href="/">Strataface</a> › <a href="/dev-notes/">Dev Notes</a> › Livewire Search or Filter Not Updating the Table? wire:model.live, Debounce, Pagination and wire:key</nav>
+<article>
+<h1>Livewire Search or Filter Not Updating the Table? wire:model.live, Debounce, Pagination and wire:key</h1>
+<p>You add a search box and a status dropdown above a list of invoices (or orders, or users). You type, and nothing happens. Or the results only change when you click to page 2. Or they change once and then always show the same rows. Almost every case comes down to a handful of causes, and the biggest one is a default that changed in Livewire 3. This checklist is written for Livewire 3 and 4 and notes where they differ.</p>
+<h2>Quick reference</h2>
+<table>
+<thead>
+<tr>
+<th>Symptom</th>
+<th>Likely cause</th>
+<th>Check</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Typing does nothing until you click something</td>
+<td><code>wire:model</code> is deferred by default</td>
+<td>1</td>
+</tr>
+<tr>
+<td>A request on every keystroke</td>
+<td>No debounce</td>
+<td>2</td>
+</tr>
+<tr>
+<td>Dropdown filter does nothing (Livewire 4)</td>
+<td><code>.change</code> / <code>.blur</code> without <code>.live</code></td>
+<td>3</td>
+</tr>
+<tr>
+<td>Always the same results</td>
+<td>Query runs in <code>mount()</code> or is stored once</td>
+<td>4</td>
+</tr>
+<tr>
+<td><code>updatedSearch()</code> never fires while typing</td>
+<td>Same deferral as check 1</td>
+<td>1, 5</td>
+</tr>
+<tr>
+<td>Search on page 3 shows "no results"</td>
+<td>Page not reset when the filter changes</td>
+<td>6</td>
+</tr>
+<tr>
+<td>Rows show stale values or jump around</td>
+<td>Missing or non-unique <code>wire:key</code></td>
+<td>7</td>
+</tr>
+<tr>
+<td>Nothing at all reacts</td>
+<td>More than one root element, or Livewire's JS isn't loaded</td>
+<td>8</td>
+</tr>
+</tbody>
+</table>
+<h2>☐ 1. Use wire:model.live on the search input</h2>
+<p>From Livewire's docs: "By default, Livewire will only send a network request when an action is performed (like <code>wire:click</code> or <code>wire:submit</code>), NOT when a <code>wire:model</code> input is updated." To update as the user types, use <code>.live</code>:</p>
+<pre><code class="language-blade">&lt;input type=&quot;search&quot; wire:model.live=&quot;search&quot; placeholder=&quot;Search invoice #&quot;&gt;
+</code></pre>
+<p>If you're upgrading from Livewire 2, the upgrade guide says: "In Livewire 3, <code>wire:model</code> is 'deferred' by default... To achieve the same behavior as <code>wire:model</code> from Livewire 2, you must use <code>wire:model.live</code>." Old tutorials that use plain <code>wire:model</code> for live search behave differently on 3 and 4.</p>
+<h2>☐ 2. Add a debounce that fits</h2>
+<p>With <code>wire:model.live</code>, Livewire "adds a 150 millisecond debounce to server updates" by default. For a search box that queries the database, a longer pause often feels the same and sends fewer requests:</p>
+<pre><code class="language-blade">&lt;input type=&quot;search&quot; wire:model.live.debounce.300ms=&quot;search&quot;&gt;
+</code></pre>
+<h2>☐ 3. Make the dropdown filter live too (watch the Livewire 4 change)</h2>
+<p>For a <code>&lt;select&gt;</code>, <code>wire:model.live="status"</code> sends the update as soon as the option changes, on both versions. The <code>.blur</code> and <code>.change</code> modifiers differ:</p>
+<ul>
+<li><strong>Livewire 3:</strong> <code>.change</code> sends "a network request ... as soon as a user selects a new option", and <code>.blur</code> sends on blur.</li>
+<li><strong>Livewire 4:</strong> <code>.blur</code> and <code>.change</code> only change <em>when</em> the value syncs. To also send a request, the docs add <code>.live</code>: <code>wire:model.change.live="state"</code>.</li>
+</ul>
+<p>If a filter works on 3 and stops on 4, look for a bare <code>.change</code> or <code>.blur</code>.</p>
+<h2>☐ 4. Filter where it runs on every request</h2>
+<p><code>mount()</code> "only runs once per component lifecycle". If you query there, or store the results in a property once, the list never changes. Run the query in <code>render()</code>, or in a <code>#[Computed]</code> method that you read from the view:</p>
+<pre><code class="language-php">public function render()
+{
+    return view('livewire.invoice-list', [
+        'invoices' =&gt; Invoice::query()
+            -&gt;when($this-&gt;status !== 'all', fn ($q) =&gt; $q-&gt;where('status', $this-&gt;status))
+            -&gt;when($this-&gt;search !== '', fn ($q) =&gt; $q-&gt;where('number', 'like', '%'.$this-&gt;search.'%'))
+            -&gt;latest('issued_at')
+            -&gt;paginate(20),
+    ]);
+}
+</code></pre>
+<p>Note: <code>like</code> with user input treats <code>%</code> and <code>_</code> as wildcards, and case sensitivity depends on your database collation. Escape or normalise the term if that matters for your data.</p>
+<h2>☐ 5. Hooks run when the update reaches the server</h2>
+<p><code>updated()</code> is "called after updating a property", and <code>updatedSearch()</code> runs for <code>$search</code> alone. With a deferred <code>wire:model</code>, the update only reaches the server with the next action, so the hook seems "dead" while you type. <code>.live</code> (with or without a debounce) fixes both.</p>
+<h2>☐ 6. Reset pagination when a filter changes</h2>
+<p>The pagination docs: "When sorting or filtering results, it is common to want to reset the page number back to 1." Without that, someone on page 3 who searches for one invoice sees an empty page:</p>
+<pre><code class="language-php">use Livewire\WithPagination;
+
+class InvoiceList extends Component
+{
+    use WithPagination;
+
+    public string $search = '';
+    public string $status = 'all';
+
+    public function updatedSearch(): void
+    {
+        $this-&gt;resetPage();
+    }
+
+    public function updatedStatus(): void
+    {
+        $this-&gt;resetPage();
+    }
+}
+</code></pre>
+<p>To keep the filters after a refresh or in a shared link, add the <code>#[Url]</code> attribute (<code>use Livewire\Attributes\Url;</code>) above <code>$search</code> and <code>$status</code>. Livewire then stores them in the query string and reads them back on page load.</p>
+<h2>☐ 7. Key every row by its record ID</h2>
+<p>"When looping through data in a Livewire template using <code>@foreach</code>, you must add a unique <code>wire:key</code> attribute to the root element rendered by the loop." Use the record's ID, not the loop index. When a filter removes rows, index keys can make Livewire reuse the wrong DOM rows:</p>
+<pre><code class="language-blade">@foreach ($invoices as $invoice)
+    &lt;tr wire:key=&quot;invoice-{{ $invoice-&gt;id }}&quot;&gt;…&lt;/tr&gt;
+@endforeach
+</code></pre>
+<h2>☐ 8. One root element, and Livewire's JavaScript on the page</h2>
+<ul>
+<li>Livewire's component docs list a "Missing root element in your Blade template (Livewire requires exactly one root element)" as a common cause when a component doesn't render. Wrap the search box, filters, table and links in a single <code>&lt;div&gt;</code>.</li>
+<li>Livewire 3 and 4 inject their JavaScript automatically on pages that contain Livewire components, unless <code>inject_assets</code> is turned off in <code>config/livewire.php</code>. If nothing reacts at all, open the browser's network tab and check that typing sends requests. If it doesn't, check for console errors and that config option.</li>
+</ul>
+<h2>Putting it together</h2>
+<pre><code class="language-blade">&lt;div&gt;
+    &lt;div class=&quot;flex gap-2&quot;&gt;
+        &lt;input type=&quot;search&quot; wire:model.live.debounce.300ms=&quot;search&quot; placeholder=&quot;Search invoice #&quot;&gt;
+        &lt;select wire:model.live=&quot;status&quot;&gt;
+            &lt;option value=&quot;all&quot;&gt;All statuses&lt;/option&gt;
+            &lt;option value=&quot;draft&quot;&gt;Draft&lt;/option&gt;
+            &lt;option value=&quot;sent&quot;&gt;Sent&lt;/option&gt;
+            &lt;option value=&quot;paid&quot;&gt;Paid&lt;/option&gt;
+            &lt;option value=&quot;overdue&quot;&gt;Overdue&lt;/option&gt;
+            &lt;option value=&quot;void&quot;&gt;Void&lt;/option&gt;
+        &lt;/select&gt;
+    &lt;/div&gt;
+
+    &lt;table&gt;
+        @forelse ($invoices as $invoice)
+            &lt;tr wire:key=&quot;invoice-{{ $invoice-&gt;id }}&quot;&gt;
+                &lt;td&gt;{{ $invoice-&gt;number }}&lt;/td&gt;
+                &lt;td&gt;{{ $invoice-&gt;status }}&lt;/td&gt;
+            &lt;/tr&gt;
+        @empty
+            &lt;tr&gt;&lt;td colspan=&quot;2&quot;&gt;No invoices match.&lt;/td&gt;&lt;/tr&gt;
+        @endforelse
+    &lt;/table&gt;
+
+    {{ $invoices-&gt;links() }}
+&lt;/div&gt;
+</code></pre>
+<h2>If you're building an invoice portal</h2>
+<p><a href="https://kendeepp.gumroad.com/l/qrzrsa?utm_source=seo&amp;utm_campaign=lwsearch">Billstack</a> ($29) is a pack of Livewire components for customer and admin billing portals. According to its product page, it includes a customer invoice list with a live search box and status filter (it filters the rows you pass in; it doesn't paginate), a line-item editor (add, remove and reorder lines with a live subtotal), a tax summary with an inclusive/exclusive toggle, a payment status badge (draft, sent, paid, overdue, void) and recurring-schedule fields. It requires PHP ^8.2, Livewire 3 or 4 (tested on 3.8.10 and 4.4.7) and Laravel 10+, with Alpine and Tailwind. It comes with a PHPUnit suite and a local demo with fake data. It's UI only: no payment provider, tax engine, PDF generation or email delivery. You wire in your own data and billing backend.</p>
+<h2>Sources</h2>
+<ul>
+<li>Livewire docs, wire:model (deferred default, <code>.live</code>, debounce, <code>.blur</code>/<code>.change</code>): https://livewire.laravel.com/docs/wire-model</li>
+<li>Livewire 3 docs, Upgrade guide (wire:model changes): https://livewire.laravel.com/docs/3.x/upgrading</li>
+<li>Livewire docs, Lifecycle hooks (<code>mount</code>, <code>updated</code>): https://livewire.laravel.com/docs/lifecycle-hooks</li>
+<li>Livewire docs, Pagination (resetting the page): https://livewire.laravel.com/docs/pagination</li>
+<li>Livewire docs, URL query parameters (<code>#[Url]</code>): https://livewire.laravel.com/docs/url</li>
+<li>Livewire docs, Components (troubleshooting): https://livewire.laravel.com/docs/components</li>
+<li>Livewire 3 docs, Components (<code>wire:key</code> in loops): https://livewire.laravel.com/docs/3.x/components</li>
+<li>Stack Overflow, Using Livewire 3 and Laravel 10.10: simple input data binding is not working: https://stackoverflow.com/questions/76756034</li>
+<li>Stack Overflow, Livewire search does not rerender the results: https://stackoverflow.com/questions/77035640</li>
+</ul>
+</article>
+<footer><a href="/">Strataface</a> · <a href="/spreadsheet-guides/">Spreadsheet Guides</a> · <a href="/dev-notes/">Dev Notes</a> · <a href="/obsidian-guides/">Obsidian Guides</a> · <a href="/blender-bake-guides/">Blender Bake Guides</a></footer>
+</body>
+</html>

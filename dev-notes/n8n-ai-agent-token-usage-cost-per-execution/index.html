@@ -1,0 +1,205 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>n8n AI Agent Token Usage: How to Get Prompt and Completion Tokens (and Cost) per Execution</title>
+<meta name="description" content="Why the n8n AI Agent node does not output token usage, and two ways to log prompt tokens, completion tokens and cost per execution: HTTP Request, or reading the execution afterwards.">
+<link rel="canonical" href="https://strataface.github.io/dev-notes/n8n-ai-agent-token-usage-cost-per-execution/">
+<style>
+body{font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;max-width:760px;margin:2.5rem auto;padding:0 1.25rem;line-height:1.65;color:#222}
+a{color:#1a5fb4}nav.crumbs{font-size:.9rem;color:#555;margin-bottom:1.5rem}h1{line-height:1.25}h2{margin-top:2.2rem}h3{margin-top:1.6rem}
+p.lead{color:#555;margin-top:0}li{margin:.3rem 0}
+pre{background:#f6f8fa;border:1px solid #e1e4e8;border-radius:6px;padding:.9rem 1rem;overflow-x:auto;font-size:.88rem;line-height:1.45}
+code{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;background:#f6f8fa;padding:.1em .3em;border-radius:4px;font-size:.92em}pre code{background:none;padding:0}
+table{border-collapse:collapse;width:100%;margin:1rem 0;font-size:.93rem;display:block;overflow-x:auto}th,td{border:1px solid #d0d7de;padding:.45rem .6rem;text-align:left;vertical-align:top}th{background:#f6f8fa}
+footer{margin-top:3rem;padding-top:1rem;border-top:1px solid #e1e4e8;font-size:.9rem;color:#555}
+</style>
+</head>
+<body>
+<nav class="crumbs"><a href="/">Strataface</a> › <a href="/dev-notes/">Dev Notes</a> › n8n AI Agent Token Usage: How to Get Prompt and Completion Tokens (and Cost) per Execution</nav>
+<article>
+<h1>n8n AI Agent Token Usage: How to Get Prompt and Completion Tokens (and Cost) per Execution</h1>
+<p>You open the chat model under your AI Agent and the token counts are right there, but nothing after the agent can read them. An expression like <code>{{ $json.tokenUsage }}</code> comes back empty, and the agent's output only has the answer. This is one of the most asked n8n AI questions, and as of October 2026 there's still no switch for it. There are two workable routes. Which one fits depends on whether you need the agent's tool loop.</p>
+<h2>Quick reference</h2>
+<table>
+<thead>
+<tr>
+<th>Route</th>
+<th>Keeps the AI Agent node?</th>
+<th>What you get</th>
+<th>Effort</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Call the model with an HTTP Request node</td>
+<td>No (you write the prompt call yourself)</td>
+<td>The provider's own <code>usage</code> object, per call, inline</td>
+<td>Low</td>
+</tr>
+<tr>
+<td>Read the finished execution with the n8n node</td>
+<td>Yes</td>
+<td>The token counts the chat model sub-node recorded, per model call</td>
+<td>Medium</td>
+</tr>
+</tbody>
+</table>
+<h2>☐ 1. Know where the numbers actually live</h2>
+<p>The provider sends token counts with each model response. In an agent setup, only the chat model sub-node sees that raw response. The AI Agent node outputs the final answer (and intermediate steps, if you turn that option on), not the usage.</p>
+<p>Note: the details here come from n8n community answers, not from n8n's documentation. The chat model sub-node records <code>tokenUsage</code> with <code>promptTokens</code>, <code>completionTokens</code> and <code>totalTokens</code> for each of its runs, or <code>tokenUsageEstimate</code> when the provider returned no usage. A tools agent makes one model call per tool round trip, so one execution can contain several model runs. Check this against one of your own executions before you build on it.</p>
+<h2>☐ 2. Route A: call the model with an HTTP Request node</h2>
+<p>If a single prompt-and-answer call is enough (classification, extraction, drafting a reply), skip the agent and call the provider's Chat Completions endpoint directly with an <strong>HTTP Request</strong> node: <code>POST {base URL}/chat/completions</code>. Keep the full response, not a simplified one.</p>
+<p>OpenAI's API reference documents the <code>usage</code> object on every chat completion:</p>
+<ul>
+<li><code>prompt_tokens</code>: "Number of tokens in the prompt."</li>
+<li><code>completion_tokens</code>: "Number of tokens in the generated completion."</li>
+<li><code>total_tokens</code>: prompt plus completion.</li>
+<li><code>completion_tokens_details.reasoning_tokens</code>: tokens the model spent on reasoning. These count toward completion tokens for billing.</li>
+<li><code>prompt_tokens_details.cached_tokens</code>: cached prompt tokens, which many providers price lower.</li>
+</ul>
+<p>A <strong>Set</strong> node right after the request can work out the cost. Replace 0.15 and 0.60 with your model's input and output price per 1M tokens:</p>
+<pre><code>{{ ((($json.usage || {}).prompt_tokens || 0) * 0.15 + (($json.usage || {}).completion_tokens || 0) * 0.60) / 1000000 }}
+</code></pre>
+<ul>
+<li>If you stream, ask for usage explicitly. With <code>stream_options: { include_usage: true }</code>, OpenAI sends one extra chunk with the totals before <code>[DONE]</code>. If the stream is interrupted you may not receive it.</li>
+<li>Note: some OpenAI-compatible providers or proxies don't return <code>usage</code>. Look at one raw response before you trust a cost of 0.</li>
+<li>Note: according to community answers, the regular OpenAI node returns usage only with <strong>Simplify Output</strong> turned off.</li>
+</ul>
+<h2>☐ 3. Route B: keep the AI Agent, read the execution afterwards</h2>
+<p>If you need the agent's tools and memory, read the token counts from the execution data. The built-in <strong>n8n</strong> node can do this. Its <strong>Execution → Get</strong> operation takes an Execution ID and has an <strong>Include Execution Details</strong> option for the detailed execution data. Pass <code>{{ $execution.id }}</code>, "the unique ID of the current workflow execution".</p>
+<p>The catch: the execution you're reading has to be finished, or at least saved. Two setups are reported to work:</p>
+<ul>
+<li><strong>Separate logger workflow.</strong> At the end of the main workflow, call a small logging workflow with Execute Workflow and pass the execution ID. Don't wait for it to finish. In the logger, wait a few seconds, then run Execution → Get.</li>
+<li><strong>Same workflow, saved progress.</strong> Turn on <strong>Save execution progress</strong> in the workflow settings, which saves "execution data for each node". It "may increase latency".</li>
+</ul>
+<p>Note: both setups come from community answers. Also check that the workflow saves successful production executions, or there will be nothing to read later.</p>
+<p>The n8n node uses the n8n API, so it needs an n8n API credential. n8n's docs note that it "doesn't support SSL". If your server requires an SSL connection, call the n8n API with an HTTP Request node instead.</p>
+<p>A <strong>Code</strong> node after the Get can collect every token count, wherever it sits. It walks the execution data and returns one item per model run:</p>
+<pre><code class="language-javascript">const exec = $input.first().json;
+const runData = (exec.data &amp;&amp; exec.data.resultData &amp;&amp; exec.data.resultData.runData) || {};
+const rows = [];
+
+function collect(node, value) {
+  if (!value || typeof value !== 'object') return;
+  for (const [key, v] of Object.entries(value)) {
+    if ((key === 'tokenUsage' || key === 'tokenUsageEstimate') &amp;&amp; v &amp;&amp; typeof v === 'object') {
+      rows.push({
+        node,
+        estimated: key === 'tokenUsageEstimate',
+        promptTokens: v.promptTokens || 0,
+        completionTokens: v.completionTokens || 0,
+        totalTokens: v.totalTokens || 0,
+      });
+    } else {
+      collect(node, v);
+    }
+  }
+}
+
+for (const [nodeName, runs] of Object.entries(runData)) collect(nodeName, runs);
+return rows.map(r =&gt; ({ json: { executionId: exec.id, ...r } }));
+</code></pre>
+<p>Note: the <code>data.resultData.runData</code> path is the structure community answers describe for Get with Include Execution Details. If your version nests it differently, the walker still finds the token fields but the node names may be off.</p>
+<h2>☐ 4. Log one row per model call, not per workflow</h2>
+<p>Whichever route you pick, write one row for each model call:</p>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Where it comes from</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Execution ID</td>
+<td><code>$execution.id</code></td>
+</tr>
+<tr>
+<td>Workflow ID</td>
+<td><code>$workflow.id</code></td>
+</tr>
+<tr>
+<td>Model</td>
+<td>Your request body or the response's <code>model</code></td>
+</tr>
+<tr>
+<td>Prompt / completion / cached tokens</td>
+<td>Provider <code>usage</code>, or the sub-node's token counts</td>
+</tr>
+<tr>
+<td>Estimated?</td>
+<td><code>tokenUsageEstimate</code> vs <code>tokenUsage</code></td>
+</tr>
+<tr>
+<td>Attempt</td>
+<td>1 for the first call, 2+ for retries</td>
+</tr>
+<tr>
+<td>Cost</td>
+<td>Your price formula</td>
+</tr>
+</tbody>
+</table>
+<p>Retries are separate, billed calls. If a node has <strong>Retry On Fail</strong> on, or you send a corrective retry after invalid JSON, log each attempt. A tools agent's extra round trips are billed too.</p>
+<h2>☐ 5. Get the price math right</h2>
+<ul>
+<li>Prices are usually quoted per 1M tokens, separately for input and output.</li>
+<li>Reasoning tokens are billed as completion tokens even though you don't see them in the answer.</li>
+<li>Cached input tokens often have their own lower price.</li>
+<li>OpenAI notes that with <code>n</code> greater than 1 "you will be charged based on the number of generated tokens across all of the choices."</li>
+<li>Once a month, compare your log with the provider's usage dashboard. That's the number you pay.</li>
+</ul>
+<h2>Symptom table</h2>
+<table>
+<thead>
+<tr>
+<th>Symptom</th>
+<th>Likely cause</th>
+<th>Check</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>{{ $json.tokenUsage }}</code> empty after the AI Agent</td>
+<td>The agent doesn't pass usage on</td>
+<td>Check 3 (or 2)</td>
+</tr>
+<tr>
+<td>Cost always 0</td>
+<td>Provider didn't return <code>usage</code>, or output was simplified</td>
+<td>Check 2</td>
+</tr>
+<tr>
+<td>Logged tokens lower than the bill</td>
+<td>Retries, tool round trips or streamed calls not counted</td>
+<td>Checks 4, 2</td>
+</tr>
+<tr>
+<td>Execution → Get has no token data</td>
+<td>Execution not finished or not saved</td>
+<td>Check 3</td>
+</tr>
+<tr>
+<td>Numbers flagged as estimates</td>
+<td><code>tokenUsageEstimate</code> instead of provider usage</td>
+<td>Check 1</td>
+</tr>
+</tbody>
+</table>
+<h2>If you'd rather start from workflows that already report it</h2>
+<p>The <a href="https://kendeepp.gumroad.com/l/uodnmm?utm_source=seo&amp;utm_campaign=n8ntokens">Store Support Agent Pack for n8n</a> is a pack of 8 n8n workflow JSON files for online stores (order status replies, ticket triage, FAQ answers, review replies, refund triage). You import them into your own n8n and run them with your own model API key. According to its product page, it works with any OpenAI-compatible model, and every run reports its own token usage and estimated cost, plus there's a cost estimate table you fill in with your model's prices. A single scenario is $39 and the full pack is $79. Its listed limits: the Shopify adapter is unit-tested against simulated Shopify responses, not yet a live store, and it was workflow-tested on n8n 1.123.84.</p>
+<h2>Sources</h2>
+<ul>
+<li>OpenAI API reference, Chat Completions (<code>usage</code>, <code>stream_options.include_usage</code>, <code>n</code>): https://platform.openai.com/docs/api-reference/chat/object</li>
+<li>n8n docs, n8n node (Execution → Get, Include Execution Details, SSL note): https://docs.n8n.io/integrations/builtin/core-nodes/n8n-nodes-base.n8n/</li>
+<li>n8n docs, Workflow settings (Save execution progress): https://docs.n8n.io/workflows/settings/</li>
+<li>n8n docs, n8n metadata (<code>$execution.id</code>, <code>$workflow.id</code>): https://docs.n8n.io/code/builtin/n8n-metadata/</li>
+<li>n8n community, How to get AI token usage information from AI Agent?: https://community.n8n.io/t/how-to-get-ai-token-usage-information-from-ai-agent/94671</li>
+<li>n8n community, Retrieve LLM Token Usage in AI Agents: https://community.n8n.io/t/retrieve-llm-token-usage-in-ai-agents/68714</li>
+</ul>
+</article>
+<footer><a href="/">Strataface</a> · <a href="/spreadsheet-guides/">Spreadsheet Guides</a> · <a href="/dev-notes/">Dev Notes</a> · <a href="/obsidian-guides/">Obsidian Guides</a> · <a href="/blender-bake-guides/">Blender Bake Guides</a></footer>
+</body>
+</html>

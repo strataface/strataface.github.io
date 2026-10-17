@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Obsidian Templates Not Working? Fix &quot;Failed to List Templates&quot;, Empty Template Lists and Daily Notes That Ignore the Template</title>
+<meta name="description" content="A checklist for the core Obsidian Templates plugin: template folder not found, nothing inserted, variables left as text, properties overwritten, and daily notes without the template.">
+<link rel="canonical" href="https://strataface.github.io/obsidian-guides/obsidian-templates-not-working-folder-not-found/">
+<style>
+body{font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;max-width:760px;margin:2.5rem auto;padding:0 1.25rem;line-height:1.65;color:#222}
+a{color:#1a5fb4}nav.crumbs{font-size:.9rem;color:#555;margin-bottom:1.5rem}h1{line-height:1.25}h2{margin-top:2.2rem}h3{margin-top:1.6rem}
+p.lead{color:#555;margin-top:0}li{margin:.3rem 0}
+pre{background:#f6f8fa;border:1px solid #e1e4e8;border-radius:6px;padding:.9rem 1rem;overflow-x:auto;font-size:.88rem;line-height:1.45}
+code{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;background:#f6f8fa;padding:.1em .3em;border-radius:4px;font-size:.92em}pre code{background:none;padding:0}
+table{border-collapse:collapse;width:100%;margin:1rem 0;font-size:.93rem;display:block;overflow-x:auto}th,td{border:1px solid #d0d7de;padding:.45rem .6rem;text-align:left;vertical-align:top}th{background:#f6f8fa}
+footer{margin-top:3rem;padding-top:1rem;border-top:1px solid #e1e4e8;font-size:.9rem;color:#555}
+</style>
+</head>
+<body>
+<nav class="crumbs"><a href="/">Strataface</a> › <a href="/obsidian-guides/">Obsidian Guides</a> › Obsidian Templates Not Working? Fix &quot;Failed to List Templates&quot;, Empty Template Lists and Daily Notes That Ignore the Template</nav>
+<article>
+<h1>Obsidian Templates Not Working? Fix &quot;Failed to List Templates&quot;, Empty Template Lists and Daily Notes That Ignore the Template</h1>
+<p>The core Templates plugin is small: point it at a folder, pick a note, and its text lands in the note you're editing. When it fails, it usually fails quietly. "Failed to list templates. Folder … not found." A template list that's empty. A click that inserts nothing. <code>{{date}}</code> showing up as literal text. A new daily note that ignores your template. Each of these has a short list of causes. This checklist covers the core plugin only (no Templater).</p>
+<h2>Quick reference</h2>
+<table>
+<thead>
+<tr>
+<th>Symptom</th>
+<th>Most likely cause</th>
+<th>Check</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>"Failed to list templates. Folder … not found"</td>
+<td>Folder set as a full disk path, or not inside the vault</td>
+<td>2</td>
+</tr>
+<tr>
+<td>Template list is empty</td>
+<td>Wrong folder, or the template isn't a note in that folder</td>
+<td>2, 3</td>
+</tr>
+<tr>
+<td>Click a template, nothing appears</td>
+<td>No active note in editing mode</td>
+<td>4</td>
+</tr>
+<tr>
+<td><code>&lt;% … %&gt;</code> or other syntax left as text</td>
+<td>Core Templates only knows three variables</td>
+<td>5</td>
+</tr>
+<tr>
+<td>Date property comes out blank or wrong</td>
+<td>Unquoted variable overwritten by the Properties panel</td>
+<td>6</td>
+</tr>
+<tr>
+<td>New daily notes don't use the template</td>
+<td>Daily notes has its own template setting</td>
+<td>7</td>
+</tr>
+</tbody>
+</table>
+<h2>☐ 1. Turn on the core plugin</h2>
+<p>Open <strong>Settings → Core plugins</strong> and enable <strong>Templates</strong>. Once it's on, the ribbon shows an <strong>Insert template</strong> button and the command palette has <code>Templates: Insert template</code>.</p>
+<h2>☐ 2. Set the template folder from inside the vault</h2>
+<p>Obsidian's help: under <strong>Settings → Core plugins → Templates → Template folder location</strong>, "enter the folder containing your templates."</p>
+<ul>
+<li>Click the field and pick the folder from the suggestions, or start typing its name. Don't paste a path from Finder or File Explorer.</li>
+<li>Note: Obsidian's help doesn't spell this out, but forum answers to the "Folder not found" error agree that the setting expects a folder <em>inside the vault</em>, written relative to the vault root (for example <code>Templates</code>), not <code>C:\Users\…\Templates</code> or <code>/Users/…/Templates</code>.</li>
+<li>If the folder lives outside the vault, move it in. Create it from Obsidian's file explorer, so Obsidian sees it right away.</li>
+</ul>
+<h2>☐ 3. Make the template a note in that folder</h2>
+<p>A template is just a Markdown note in the template folder. Obsidian's help: "In the template folder, create a note containing the text you want to appear when you use the template."</p>
+<ul>
+<li>Check that the file is really <code>.md</code> and sits in the folder you configured, not one level up.</li>
+<li>Note: if the vault sits in a cloud-synced folder (iCloud Drive, OneDrive, Dropbox), files that are online-only placeholders can confuse Obsidian. Forum answers suggest making the vault folder available offline, or testing with a copy of the vault in a normal local folder.</li>
+</ul>
+<h2>☐ 4. Insert into an active note, in editing mode</h2>
+<p>Templates "insert pre-defined snippets of text into your active note". It doesn't create a new note by itself.</p>
+<ul>
+<li>Open the note first, click into the body, then run <strong>Insert template</strong>. "The content of the template is inserted at your current cursor position. If your cursor is not in the note body, the content is inserted at your last cursor position."</li>
+<li>Note: in one forum thread, nothing was inserted because the note was open in Reading view. Switch to Live Preview or Source mode and try again.</li>
+<li>For speed, give <code>Templates: Insert template</code> a hotkey in <strong>Settings → Hotkeys</strong>.</li>
+</ul>
+<h2>☐ 5. Use only the variables core Templates supports</h2>
+<p>The help lists three template variables:</p>
+<table>
+<thead>
+<tr>
+<th>Variable</th>
+<th>Value</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>{{title}}</code></td>
+<td>Title of the active note</td>
+</tr>
+<tr>
+<td><code>{{date}}</code></td>
+<td>Today's date, default format <code>YYYY-MM-DD</code></td>
+</tr>
+<tr>
+<td><code>{{time}}</code></td>
+<td>Current time, default format <code>HH:mm</code></td>
+</tr>
+</tbody>
+</table>
+<p>You can add a Moment.js format after a colon, such as <code>{{date:YYYY-MM-DD}}</code> or <code>{{date:dddd, MMMM D}}</code>. The defaults are set under <strong>Settings → Core plugins → Templates → Date format</strong> and <strong>Time format</strong>.</p>
+<p>Note: the help lists no other variables. Syntax from other plugins, such as Templater's <code>&lt;% … %&gt;</code>, isn't documented for core Templates, so expect it to stay as plain text.</p>
+<h2>☐ 6. Protect variables inside properties</h2>
+<p>Obsidian's help warns that in Live Preview, "the Properties in document panel can overwrite template variables that do not have quotation marks."</p>
+<ul>
+<li>In the template's properties, quote the variable: <code>date: "{{date}}"</code>.</li>
+<li>Edit template files in Source mode, or set <strong>Settings → Editor → Properties in document</strong> to <strong>Source</strong>.</li>
+<li>After changing a template, insert it into a scratch note and check the properties before using it on real notes.</li>
+</ul>
+<h2>☐ 7. Daily notes: set the template there too</h2>
+<p>Daily notes uses its own setting. In <strong>Settings</strong>, open <strong>Daily notes</strong> under plugin options and set <strong>Template file location</strong>.</p>
+<ul>
+<li>Pick your daily template note there. Help: "Obsidian uses the template the next time you create a new daily note."</li>
+<li>That means existing daily notes don't change. To apply the template to today's note after the fact, open it and use <strong>Insert template</strong>.</li>
+<li>The help also notes that <code>{{date}}</code> and <code>{{time}}</code> work in Daily notes and Unique note creator templates.</li>
+</ul>
+<h2>☐ 8. If a setting keeps reverting</h2>
+<p>Note: in a forum thread about the template folder "reverting" after it was changed, the suggested cause was the sync service the vault lived in. Pause sync, set the folder again and restart Obsidian. If it still reverts, test with a copy of the vault outside the synced folder.</p>
+<h2>Want a vault where this is already set up?</h2>
+<p><a href="https://kendeepp.gumroad.com/l/huwkwx?utm_source=seo&amp;utm_campaign=templates">Indie Weekly</a> ($39) is a ready-to-open Obsidian vault for indie developers. According to its product page, it has 41 Markdown notes (a Home dashboard, getting-started guide, tag convention, metrics cheatsheet and filled examples) and 8 templates: weekly review with a next-week plan, ship log, daily log, metrics snapshot, project, idea, decision and experiment. It uses core Obsidian settings only, so no community plugins are needed; optional ones are listed in its how-to. You unzip it and use <strong>Open folder as vault</strong>. It's made for Obsidian desktop; mobile hasn't been tested yet.</p>
+<h2>Sources</h2>
+<ul>
+<li>Obsidian Help, Templates (folder setting, variables, insert behaviour, properties warning): https://help.obsidian.md/plugins/templates</li>
+<li>Obsidian Help, Daily notes (template file location, when the template applies): https://help.obsidian.md/plugins/daily-notes</li>
+<li>Moment.js format tokens: https://momentjs.com/docs/#/displaying/format/</li>
+<li>Obsidian forum, Template folder not found: https://forum.obsidian.md/t/template-folder-not-found/89602</li>
+<li>Obsidian forum, Template Folder Not Found! (Windows 10): https://forum.obsidian.md/t/template-folder-not-found-windows-10/99011</li>
+<li>Obsidian forum, Location of TEMPLATES folder NOT FOUND: https://forum.obsidian.md/t/location-of-templates-folder-not-found/28194</li>
+</ul>
+</article>
+<footer><a href="/">Strataface</a> · <a href="/spreadsheet-guides/">Spreadsheet Guides</a> · <a href="/dev-notes/">Dev Notes</a> · <a href="/obsidian-guides/">Obsidian Guides</a> · <a href="/blender-bake-guides/">Blender Bake Guides</a></footer>
+</body>
+</html>

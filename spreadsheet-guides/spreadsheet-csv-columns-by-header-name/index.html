@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Pasted a New CSV and the Columns Moved? Pull Columns by Header Name, Not Position</title>
+<meta name="description" content="Pull spreadsheet columns by header name with INDEX and MATCH, so a pasted CSV export keeps working when columns are added, removed or reordered. Google Sheets and LibreOffice Calc.">
+<link rel="canonical" href="https://strataface.github.io/spreadsheet-guides/spreadsheet-csv-columns-by-header-name/">
+<style>
+body{font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;max-width:760px;margin:2.5rem auto;padding:0 1.25rem;line-height:1.65;color:#222}
+a{color:#1a5fb4}nav.crumbs{font-size:.9rem;color:#555;margin-bottom:1.5rem}h1{line-height:1.25}h2{margin-top:2.2rem}h3{margin-top:1.6rem}
+p.lead{color:#555;margin-top:0}li{margin:.3rem 0}
+pre{background:#f6f8fa;border:1px solid #e1e4e8;border-radius:6px;padding:.9rem 1rem;overflow-x:auto;font-size:.88rem;line-height:1.45}
+code{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;background:#f6f8fa;padding:.1em .3em;border-radius:4px;font-size:.92em}pre code{background:none;padding:0}
+table{border-collapse:collapse;width:100%;margin:1rem 0;font-size:.93rem;display:block;overflow-x:auto}th,td{border:1px solid #d0d7de;padding:.45rem .6rem;text-align:left;vertical-align:top}th{background:#f6f8fa}
+footer{margin-top:3rem;padding-top:1rem;border-top:1px solid #e1e4e8;font-size:.9rem;color:#555}
+</style>
+</head>
+<body>
+<nav class="crumbs"><a href="/">Strataface</a> › <a href="/spreadsheet-guides/">Spreadsheet Guides</a> › Pasted a New CSV and the Columns Moved? Pull Columns by Header Name, Not Position</nav>
+<article>
+<h1>Pasted a New CSV and the Columns Moved? Pull Columns by Header Name, Not Position</h1>
+<p>You paste this month's sales export over last month's, and your totals are suddenly wrong. Nothing is broken in the formulas. The platform added a column, or moved one, and every formula that said "column C" now points at something else. The fix is to stop pointing at a letter and look up the column by its header text instead.</p>
+<p>This works with plain INDEX and MATCH, so the same formulas run in Google Sheets and LibreOffice Calc, without FILTER, QUERY or XLOOKUP.</p>
+<h2>The idea in one line</h2>
+<p><code>MATCH</code> finds the position of a header in row 1. <code>INDEX</code> uses that position as the column number. Google's INDEX help shows exactly this pattern, with <code>MATCH("Dietary Restriction", A1:D1, 0)</code> as the column argument.</p>
+<p>The examples below assume:</p>
+<ul>
+<li>An <strong>Import</strong> sheet where you paste the raw CSV, headers in row 1.</li>
+<li>A <strong>Clean</strong> sheet that your reports read from. Row 1 holds the header names you want, row 2 holds the column number found for each, and data starts in row 3.</li>
+</ul>
+<h2>Checklist</h2>
+<p>☐ 1. <strong>Find each column once, in a helper row.</strong> In Clean, put the wanted header text in row 1 (for example <code>Purchase Date</code> and <code>Net Total ($)</code>, two of the column names in Gumroad's sales CSV). In row 2:</p>
+<pre><code>=IFERROR(MATCH(A$1, Import!$A$1:$Z$1, 0), 0)
+</code></pre>
+<p>Fill it right. The <code>0</code> at the end of MATCH means exact match. Leave it out and MATCH assumes the row is sorted and can return a wrong column without any error. The IFERROR turns "not found" into 0, so you can see a missing column at a glance instead of a wall of <code>#N/A</code>.</p>
+<p>☐ 2. <strong>Pull the values through that number.</strong> In Clean row 3, fill right and down:</p>
+<pre><code>=IF(A$2=0, &quot;&quot;, IF(INDEX(Import!$A$1:$Z$1000, ROW()-1, A$2)=&quot;&quot;, &quot;&quot;, INDEX(Import!$A$1:$Z$1000, ROW()-1, A$2)))
+</code></pre>
+<p><code>ROW()-1</code> makes Clean row 3 read Import row 2, the first data row. The inner IF stops empty source cells from showing as 0. Now the Clean sheet always has the same column order, whatever order the export uses.</p>
+<p>☐ 3. <strong>Or skip the copy and total straight from the raw columns.</strong> If you only need totals, <code>INDEX(range, 0, n)</code> returns a whole column (Google's INDEX help: a row of 0 returns the entire column), and SUMIFS accepts it as a range:</p>
+<pre><code>=SUMIFS(
+  INDEX(Import!$A$2:$Z$1000, 0, MATCH(&quot;Net Total ($)&quot;, Import!$A$1:$Z$1, 0)),
+  INDEX(Import!$A$2:$Z$1000, 0, MATCH(&quot;Purchase Date&quot;, Import!$A$1:$Z$1, 0)), &quot;&gt;=&quot;&amp;H1,
+  INDEX(Import!$A$2:$Z$1000, 0, MATCH(&quot;Purchase Date&quot;, Import!$A$1:$Z$1, 0)), &quot;&lt;&quot;&amp;EDATE(H1, 1))
+</code></pre>
+<p>With the first day of a month in H1, that sums one month's net, whichever column each header lands in. Keep all ranges the same size (rows 2 to 1000 here); Microsoft's SUMIFS page requires each criteria range to match the sum range.</p>
+<p>☐ 4. <strong>Handle platforms that name the same field differently.</strong> Chain fallbacks, most specific first:</p>
+<pre><code>=IFERROR(MATCH(&quot;Net Total ($)&quot;, Import!$A$1:$Z$1, 0), IFERROR(MATCH(&quot;Net&quot;, Import!$A$1:$Z$1, 0), 0))
+</code></pre>
+<p>Add one IFERROR level per alternative name. The result is still a single column number, so nothing downstream changes.</p>
+<p>☐ 5. <strong>When a header "isn't found" but you can see it, check the length.</strong> A trailing space is invisible. <code>=LEN(Import!C1)</code> returns 4 for <code>Net</code> and 3 for <code>Net</code>. Fix the header text, or add the spaced version as one more fallback. Note: some exports may also carry an invisible character before the first header; if only the first column fails, retype that header cell.</p>
+<p>☐ 6. <strong>Check that numbers arrived as numbers.</strong> An amount stored as text (<code>'7.00'</code> instead of 7) can be left out of a SUMIFS total, so the total looks plausible and is still short. Compare the two counts:</p>
+<pre><code>=COUNT(INDEX(Import!$A$2:$Z$1000, 0, C$2))
+=COUNTA(INDEX(Import!$A$2:$Z$1000, 0, C$2))
+</code></pre>
+<p>If COUNTA is higher, some cells in that column are text. Note: Google's SUMIFS help doesn't spell out how text amounts are treated, so rely on this count rather than on the total. To convert one value like <code>$1,234.50</code>:</p>
+<pre><code>=IF(ISNUMBER(C3), C3, IFERROR(VALUE(SUBSTITUTE(SUBSTITUTE(C3, &quot;,&quot;, &quot;&quot;), &quot;$&quot;, &quot;&quot;)), 0))
+</code></pre>
+<p>Note: this works for amounts written with a comma as the thousands separator. If your export uses a comma as the decimal mark, change the substitutions to match.</p>
+<p>☐ 7. <strong>Check dates the same way.</strong> A date column that SUMIFS can't compare silently drops every row. <code>=ISNUMBER(A3)</code> on a pulled date should be TRUE. If it's FALSE, the date came in as text and needs converting before any date range works.</p>
+<p>☐ 8. <strong>Paste over the old data, not beside it.</strong> In Google Sheets, File &gt; Import has a "Replace current sheet" option, which clears the old export so leftover rows from a longer previous file can't sneak into your totals. In other apps, clear the Import sheet before pasting.</p>
+<p>☐ 9. <strong>Make the range wider than you need.</strong> <code>$A$1:$Z$1</code> covers 26 columns. If an export grows past column Z, MATCH stops seeing the new headers. Pick a range with headroom.</p>
+<h2>What can still go wrong</h2>
+<table>
+<thead>
+<tr>
+<th>Symptom</th>
+<th>Likely cause</th>
+<th>Check</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Whole Clean column blank</td>
+<td>Header not found (helper shows 0)</td>
+<td>Steps 1, 4, 5</td>
+</tr>
+<tr>
+<td>Total lower than the platform's</td>
+<td>Amounts stored as text</td>
+<td>Step 6</td>
+</tr>
+<tr>
+<td>Month total is 0</td>
+<td>Dates stored as text, or ranges of different heights</td>
+<td>Steps 3, 7</td>
+</tr>
+<tr>
+<td>Old rows still counted</td>
+<td>New export shorter than the last one</td>
+<td>Step 8</td>
+</tr>
+<tr>
+<td>Wrong column, no error</td>
+<td>MATCH without the <code>0</code></td>
+<td>Step 1</td>
+</tr>
+</tbody>
+</table>
+<p>Note: Google's MATCH help doesn't say whether header matching ignores upper and lower case or treats <code>*</code> and <code>?</code> as wildcards. Typing the header exactly as it appears in the file avoids depending on either.</p>
+<h2>If you sell on several platforms</h2>
+<p>Doing this for every export, on every platform, is the repetitive part. <a href="https://kendeepp.gumroad.com/l/avawo?utm_source=seo&amp;utm_campaign=csvheaders">Solo OS</a> ($29, Google Sheets) is a finance sheet for one-person online sellers that is built on this approach. According to its product page, you paste your Gumroad, Lemon Squeezy and Payhip sales exports, and columns are matched by header name, so column order doesn't matter. It then works out net income after platform fees, affiliate commissions, PayPal/Stripe Connect fees, refunds and lost disputes, and has payout reconciliation and a monthly dashboard. It uses only common functions such as INDEX/MATCH, SUMIFS and COUNTIFS. Its listed limits include 500 rows per platform tab by default, and sample headers built from each platform's documentation rather than checked against real seller exports, so rename headers if yours differ.</p>
+<h2>Sources</h2>
+<ul>
+<li>Google Docs Editors Help, INDEX (INDEX with MATCH; row 0 returns the whole column): https://support.google.com/docs/answer/3098242?hl=en</li>
+<li>Google Docs Editors Help, MATCH (search_type 0 for exact match): https://support.google.com/docs/answer/3093378?hl=en</li>
+<li>Google Docs Editors Help, Import data sets &amp; spreadsheets ("Replace current sheet"): https://support.google.com/docs/answer/40608?hl=en</li>
+<li>Microsoft Support, SUMIFS function (criteria ranges the same size as the sum range): https://support.microsoft.com/en-us/office/sumifs-function-c9e748f5-7ea7-455d-9406-611cebce642b</li>
+<li>Gumroad Help Center, The sales analytics dashboard (sales CSV columns <code>Purchase Date</code>, <code>Net Total ($)</code>): https://gumroad.com/help/article/74-the-analytics-dashboard</li>
+</ul>
+<p>Questions this page answers:</p>
+<ul>
+<li>Retrieve Google Sheets column by header name: https://stackoverflow.com/questions/55692208/retrieve-google-sheets-column-by-header-name</li>
+<li>How to reference a column by header name: https://stackoverflow.com/questions/76047390/how-to-reference-a-column-by-header-name-using-data-set-named-range-in-google-s</li>
+<li>Sum column by referencing column header: https://webapps.stackexchange.com/questions/58893/sum-column-by-referencing-column-header</li>
+<li>Combine data in sheets by header name, different structures: https://stackoverflow.com/questions/77026792/combine-data-in-sheets-by-header-name-different-structures</li>
+</ul>
+</article>
+<footer><a href="/">Strataface</a> · <a href="/spreadsheet-guides/">Spreadsheet Guides</a> · <a href="/dev-notes/">Dev Notes</a> · <a href="/obsidian-guides/">Obsidian Guides</a> · <a href="/blender-bake-guides/">Blender Bake Guides</a></footer>
+</body>
+</html>

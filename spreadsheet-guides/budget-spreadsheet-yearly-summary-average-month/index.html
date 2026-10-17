@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Yearly Budget Summary: Monthly Income, Expenses and an Average That Skips Empty Months</title>
+<meta name="description" content="Build a yearly budget summary: income, expenses and balance per month with SUMIFS date ranges, yearly totals, and an average month that skips months with no data.">
+<link rel="canonical" href="https://strataface.github.io/spreadsheet-guides/budget-spreadsheet-yearly-summary-average-month/">
+<style>
+body{font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;max-width:760px;margin:2.5rem auto;padding:0 1.25rem;line-height:1.65;color:#222}
+a{color:#1a5fb4}nav.crumbs{font-size:.9rem;color:#555;margin-bottom:1.5rem}h1{line-height:1.25}h2{margin-top:2.2rem}h3{margin-top:1.6rem}
+p.lead{color:#555;margin-top:0}li{margin:.3rem 0}
+pre{background:#f6f8fa;border:1px solid #e1e4e8;border-radius:6px;padding:.9rem 1rem;overflow-x:auto;font-size:.88rem;line-height:1.45}
+code{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;background:#f6f8fa;padding:.1em .3em;border-radius:4px;font-size:.92em}pre code{background:none;padding:0}
+table{border-collapse:collapse;width:100%;margin:1rem 0;font-size:.93rem;display:block;overflow-x:auto}th,td{border:1px solid #d0d7de;padding:.45rem .6rem;text-align:left;vertical-align:top}th{background:#f6f8fa}
+footer{margin-top:3rem;padding-top:1rem;border-top:1px solid #e1e4e8;font-size:.9rem;color:#555}
+</style>
+</head>
+<body>
+<nav class="crumbs"><a href="/">Strataface</a> › <a href="/spreadsheet-guides/">Spreadsheet Guides</a> › Yearly Budget Summary: Monthly Income, Expenses and an Average That Skips Empty Months</nav>
+<article>
+<h1>Yearly Budget Summary: Monthly Income, Expenses and an Average That Skips Empty Months</h1>
+<p>A transaction list tells you what happened. A year overview tells you whether it's working: twelve rows of income, expenses and balance, a total, and an average month. The average is the number people get wrong most often. In October, dividing by 12 counts November and December as zero months and makes your typical month look far worse than it is.</p>
+<p>This page builds the year sheet from a plain transaction list, using SUMIFS with date ranges, so it works the same in Google Sheets, LibreOffice Calc and Excel.</p>
+<h2>The layout these formulas assume</h2>
+<p>A <strong>Transactions</strong> sheet, one row per transaction, headers in row 1:</p>
+<table>
+<thead>
+<tr>
+<th>Column</th>
+<th>Holds</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>A</td>
+<td>Date (a real date)</td>
+</tr>
+<tr>
+<td>C</td>
+<td>Type: Income or Expense</td>
+</tr>
+<tr>
+<td>E</td>
+<td>Amount (refunds as negative expenses)</td>
+</tr>
+</tbody>
+</table>
+<p>A <strong>Year</strong> sheet with the year in B1, month numbers 1 to 12 in A4:A15, and Income, Expenses and Balance in columns B, C and D.</p>
+<h2>Checklist</h2>
+<p>☐ 1. <strong>Sum each month between its first day and the next month's first day.</strong> Income for the month in A4:</p>
+<pre><code>=SUMIFS(Transactions!$E$2:$E$400, Transactions!$C$2:$C$400, &quot;Income&quot;,
+        Transactions!$A$2:$A$400, &quot;&gt;=&quot;&amp;DATE($B$1, A4, 1),
+        Transactions!$A$2:$A$400, &quot;&lt;&quot;&amp;DATE($B$1, A4+1, 1))
+</code></pre>
+<p>Expenses are the same with <code>"Expense"</code>. Balance is <code>=B4-C4</code>. Fill all three down to row 15. For December, <code>DATE(year, 13, 1)</code> becomes 1 January of the next year (Google's DATE help documents this rollover), so the same formula works for every row.</p>
+<p>☐ 2. <strong>Don't sum by MONTH() alone.</strong> A formula like <code>SUMPRODUCT((MONTH(A2:A400)=1)*E2:E400)</code> adds every January in the list, from every year. Once your sheet runs past twelve months, last year's numbers leak into this year's rows. The date-range version in step 1 can't do that, because the year is part of the range.</p>
+<p>☐ 3. <strong>Total the year from the twelve rows.</strong> In row 16:</p>
+<pre><code>=SUM(B4:B15)
+</code></pre>
+<p>Fill it across Income, Expenses and Balance. Cross-check once: total income here should equal a single SUMIFS over the whole year (<code>"&gt;="&amp;DATE($B$1,1,1)</code> and <code>"&lt;"&amp;DATE($B$1+1,1,1)</code>). If it doesn't, some dates are stored as text or fall outside the year.</p>
+<p>☐ 4. <strong>Average only the months with activity.</strong> Count a month as active when it has any income or any expense, then divide the yearly balance by that count:</p>
+<pre><code>=IFERROR(D16 / SUMPRODUCT((((B4:B15&lt;&gt;0) + (C4:C15&lt;&gt;0)) &gt; 0) * 1), &quot;&quot;)
+</code></pre>
+<p>The inner part gives 1 for each month with income or expenses and 0 otherwise. IFERROR shows a blank for a brand-new year with no data.</p>
+<p>Here is why the two shortcuts give different answers. Take a year with January +1,400, February +1,850, March 0 (income 500, expenses 500), December -100, and nothing else:</p>
+<table>
+<thead>
+<tr>
+<th>Formula</th>
+<th>Result</th>
+<th>Problem</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>=AVERAGE(D4:D15)</code></td>
+<td>262.50</td>
+<td>Divides by 12, including eight empty months</td>
+</tr>
+<tr>
+<td><code>=AVERAGEIF(D4:D15, "&lt;&gt;0")</code></td>
+<td>1,050.00</td>
+<td>Drops March, a real month that broke even</td>
+</tr>
+<tr>
+<td>The formula in this step</td>
+<td>787.50</td>
+<td>3,150 over 4 active months</td>
+</tr>
+</tbody>
+</table>
+<p>AVERAGEIF on non-zero balances looks right until you have a month that breaks even. Testing income and expenses separately avoids it.</p>
+<p>☐ 5. <strong>Prefer a visible helper column if SUMPRODUCT feels opaque.</strong> In G4, filled down:</p>
+<pre><code>=IF(OR(B4&lt;&gt;0, C4&lt;&gt;0), 1, 0)
+</code></pre>
+<p>Then <code>=IFERROR(AVERAGEIFS(D4:D15, G4:G15, 1), "")</code> gives the same 787.50. The helper column also makes it easy to see which months were counted.</p>
+<p>☐ 6. <strong>Add a running balance to see the year build up.</strong> In E4, filled down:</p>
+<pre><code>=SUM($D$4:D4)
+</code></pre>
+<p>The first reference is locked and the second moves, so each row adds everything up to that month. The last row equals the yearly balance.</p>
+<p>☐ 7. <strong>Add a savings rate if you track one.</strong></p>
+<pre><code>=IFERROR(D16/B16, &quot;&quot;)
+</code></pre>
+<p>Format it as a percentage. It is the share of the year's income you didn't spend.</p>
+<p>☐ 8. <strong>Catch rows that are counted nowhere.</strong> A transaction with no Type is neither income nor expense, so it vanishes from every row. Count them for the year:</p>
+<pre><code>=COUNTIFS(Transactions!$A$2:$A$400, &quot;&gt;=&quot;&amp;DATE($B$1, 1, 1),
+          Transactions!$A$2:$A$400, &quot;&lt;&quot;&amp;DATE($B$1+1, 1, 1),
+          Transactions!$C$2:$C$400, &quot;&quot;)
+</code></pre>
+<p>Anything above 0 needs a Type.</p>
+<p>☐ 9. <strong>Label months with dates, not typed text.</strong> <code>=TEXT(DATE($B$1, A4, 1), "mmm")</code> gives Jan, Feb and so on. Note: the format codes and month names follow your spreadsheet's locale, so in some languages the code letters differ. Typing the twelve labels by hand is a safe fallback.</p>
+<h2>Quick diagnosis</h2>
+<table>
+<thead>
+<tr>
+<th>Symptom</th>
+<th>Likely cause</th>
+<th>Step</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>January far too high</td>
+<td>MONTH() summing several years</td>
+<td>2</td>
+</tr>
+<tr>
+<td>Average monthly balance looks too low</td>
+<td>Dividing by 12</td>
+<td>4</td>
+</tr>
+<tr>
+<td>Average skips a real month</td>
+<td>AVERAGEIF on non-zero balances</td>
+<td>4</td>
+</tr>
+<tr>
+<td>Year total doesn't match the transaction list</td>
+<td>Text dates, or rows without a Type</td>
+<td>3, 8</td>
+</tr>
+<tr>
+<td>December only counts the 1st</td>
+<td>End date written as <code>&lt;=DATE(year,12,1)</code> instead of <code>&lt;DATE(year,13,1)</code></td>
+<td>1</td>
+</tr>
+</tbody>
+</table>
+<h2>A ready-made version</h2>
+<p>If you want this without building it, the <a href="https://kendeepp.gumroad.com/l/cwblyn?utm_source=seo&amp;utm_campaign=yearview">Monthly Budget &amp; Spending Tracker</a> ($5) is one .xlsx file for Google Sheets and LibreOffice Calc. According to its product page, its Year view (pick the year) shows income, expenses and balance for each month, yearly totals, the average monthly balance over months with activity, and an income-vs-expenses chart. A Month view shows each category's budget, spent and left with an "Over budget" flag, and refunds are entered as negative amounts. A row with no Type selected is not counted as income or expense. Its listed limits: formulas tested in LibreOffice Calc and import-tested in Google Sheets, not tested in Microsoft Excel; room for 400 transaction rows; and it was built with AI assistance.</p>
+<h2>Sources</h2>
+<ul>
+<li>Google Docs Editors Help, SUMIFS: https://support.google.com/docs/answer/3238496?hl=en</li>
+<li>Google Docs Editors Help, DATE (month 13 rolls over to January of the next year): https://support.google.com/docs/answer/3092969?hl=en</li>
+<li>Google Docs Editors Help, AVERAGEIFS: https://support.google.com/docs/answer/3256534?hl=en</li>
+<li>Microsoft Support, SUMIFS function: https://support.microsoft.com/en-us/office/sumifs-function-c9e748f5-7ea7-455d-9406-611cebce642b</li>
+</ul>
+<p>Questions this page answers:</p>
+<ul>
+<li>Getting the sum of the amount per month: https://stackoverflow.com/questions/62959278/getting-sum-of-the-amount-per-month-google-sheet</li>
+<li>A sum of earnings per month and per year: https://stackoverflow.com/questions/75165658/google-sheets-trying-to-create-a-sum-of-earnings-per-month-per-year</li>
+<li>Calculating the average per month based on multiple rows: https://webapps.stackexchange.com/questions/103467/using-google-sheets-how-can-i-calculate-the-average-per-month-based-on-multiple</li>
+<li>Balance on the first day of the month, and the sum per month: https://webapps.stackexchange.com/questions/101710/balance-on-the-first-day-of-the-month-and-the-sum-per-month</li>
+</ul>
+</article>
+<footer><a href="/">Strataface</a> · <a href="/spreadsheet-guides/">Spreadsheet Guides</a> · <a href="/dev-notes/">Dev Notes</a> · <a href="/obsidian-guides/">Obsidian Guides</a> · <a href="/blender-bake-guides/">Blender Bake Guides</a></footer>
+</body>
+</html>

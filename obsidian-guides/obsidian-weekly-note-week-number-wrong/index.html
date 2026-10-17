@@ -1,0 +1,212 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Obsidian Weekly Notes: Why the Week Number Is Wrong (and a Core-Plugins-Only Setup)</title>
+<meta name="description" content="Why Obsidian weekly notes show the wrong week number around New Year (YYYY vs GGGG, ISO vs locale weeks) and a core-plugins-only weekly note setup.">
+<link rel="canonical" href="https://strataface.github.io/obsidian-guides/obsidian-weekly-note-week-number-wrong/">
+<style>
+body{font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;max-width:760px;margin:2.5rem auto;padding:0 1.25rem;line-height:1.65;color:#222}
+a{color:#1a5fb4}nav.crumbs{font-size:.9rem;color:#555;margin-bottom:1.5rem}h1{line-height:1.25}h2{margin-top:2.2rem}h3{margin-top:1.6rem}
+p.lead{color:#555;margin-top:0}li{margin:.3rem 0}
+pre{background:#f6f8fa;border:1px solid #e1e4e8;border-radius:6px;padding:.9rem 1rem;overflow-x:auto;font-size:.88rem;line-height:1.45}
+code{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;background:#f6f8fa;padding:.1em .3em;border-radius:4px;font-size:.92em}pre code{background:none;padding:0}
+table{border-collapse:collapse;width:100%;margin:1rem 0;font-size:.93rem;display:block;overflow-x:auto}th,td{border:1px solid #d0d7de;padding:.45rem .6rem;text-align:left;vertical-align:top}th{background:#f6f8fa}
+footer{margin-top:3rem;padding-top:1rem;border-top:1px solid #e1e4e8;font-size:.9rem;color:#555}
+</style>
+</head>
+<body>
+<nav class="crumbs"><a href="/">Strataface</a> › <a href="/obsidian-guides/">Obsidian Guides</a> › Obsidian Weekly Notes: Why the Week Number Is Wrong (and a Core-Plugins-Only Setup)</nav>
+<article>
+<h1>Obsidian Weekly Notes: Why the Week Number Is Wrong (and a Core-Plugins-Only Setup)</h1>
+<p>You name your weekly notes like <code>2026-W42</code>. Most of the year that works, and then one week it doesn't. On 29 December the new note is called <code>2025-W01</code> instead of <code>2026-W01</code>. Or every Sunday (or Monday) lands in the wrong week. Or a weekly note made by one plugin doesn't match the week number another plugin shows.</p>
+<p>Almost every case comes down to the date-format tokens. Obsidian's date formats (in the Templates plugin, the Daily notes plugin, and most community plugins) use Moment.js format strings, and Moment has three "years" and two kinds of "week number". This checklist shows which tokens to use, then a weekly-note setup that needs only core plugins.</p>
+<h2>Quick reference</h2>
+<table>
+<thead>
+<tr>
+<th>You want</th>
+<th>Use</th>
+<th>Example (Mon 29 Dec 2025)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>ISO week (weeks start Monday, week 1 contains the first Thursday)</td>
+<td><code>GGGG-[W]WW</code></td>
+<td><code>2026-W01</code></td>
+</tr>
+<tr>
+<td>Locale week (follows the locale's first day of week)</td>
+<td><code>gggg-[W]ww</code></td>
+<td>depends on locale</td>
+</tr>
+<tr>
+<td><strong>Don't</strong> combine these</td>
+<td><code>YYYY-[W]WW</code></td>
+<td><code>2025-W01</code> (wrong year)</td>
+</tr>
+</tbody>
+</table>
+<p><code>[W]</code> is a literal letter W. Square brackets stop Moment from reading it as a token.</p>
+<h2>☐ 1. Don't pair the calendar year with a week number</h2>
+<p><code>YYYY</code> is the calendar year. <code>WW</code> is the ISO week number. Around New Year they disagree:</p>
+<table>
+<thead>
+<tr>
+<th>Date</th>
+<th><code>YYYY-[W]WW</code></th>
+<th><code>GGGG-[W]WW</code></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Sun 28 Dec 2025</td>
+<td>2025-W52</td>
+<td>2025-W52</td>
+</tr>
+<tr>
+<td>Mon 29 Dec 2025</td>
+<td><strong>2025-W01</strong></td>
+<td>2026-W01</td>
+</tr>
+<tr>
+<td>Thu 1 Jan 2026</td>
+<td>2026-W01</td>
+<td>2026-W01</td>
+</tr>
+<tr>
+<td>Thu 31 Dec 2026</td>
+<td>2026-W53</td>
+<td>2026-W53</td>
+</tr>
+<tr>
+<td>Fri 1 Jan 2027</td>
+<td><strong>2027-W53</strong></td>
+<td>2026-W53</td>
+</tr>
+</tbody>
+</table>
+<p>29 December 2025 is in ISO week 1 of 2026, so <code>YYYY</code> gives the right week with the wrong year. In the other direction, 1 January 2027 is still in week 53 of 2026. An Obsidian forum report of exactly this ("Expected result 2026-W01, Actual result 2025-W01") was answered by switching to the ISO week-year token <code>GGGG</code>.</p>
+<p>Fix: use <code>GGGG</code> with <code>WW</code>, or <code>gggg</code> with <code>ww</code>. Never mix <code>YYYY</code> with a week token.</p>
+<p>The table values come from Moment.js 2.x run outside Obsidian. Obsidian bundles its own Moment build, but these tokens are part of Moment's documented format set.</p>
+<h2>☐ 2. Pick ISO weeks or locale weeks, and use them everywhere</h2>
+<p>Moment has two week systems:</p>
+<ul>
+<li><code>W</code> / <code>WW</code> with <code>GGGG</code> is the <strong>ISO week</strong>. Weeks start on Monday, and the first week of the year is the one that contains the first Thursday.</li>
+<li><code>w</code> / <code>ww</code> with <code>gggg</code> is the <strong>locale week</strong>. The first day of the week and the first week of the year come from the locale. In Moment's default English (US) locale, weeks start on Sunday. Sunday 29 Sep 2024 is locale week 40 but ISO week 39.</li>
+</ul>
+<p>If your daily notes put a Sunday in a different week than your weekly note does, one place is using ISO weeks and the other is using locale weeks. The Periodic Notes FAQ, quoted in an Obsidian forum thread, says it defaults to <code>ww</code> (week of year) and that <code>WW</code> gives the ISO week.</p>
+<p>Note: which locale Obsidian passes to Moment depends on your app language and system settings. If you use <code>ww</code>/<code>gggg</code>, check a few Sundays and Mondays in your own vault. If you don't need locale weeks, ISO (<code>GGGG-[W]WW</code>) gives the same answer on every machine.</p>
+<h2>☐ 3. Check every place that writes a week number</h2>
+<p>One mismatched format is enough to break links between daily and weekly notes. Check:</p>
+<ul>
+<li>Your weekly-note file name (however you create it).</li>
+<li>Any <code>{{date:…}}</code> in your templates (below).</li>
+<li>The <strong>Date format</strong> of the core Daily notes plugin, if you put the week in a daily note's path.</li>
+<li>Community plugins (Periodic Notes, Calendar, Templater, Dataview) have their own settings.</li>
+<li>Base formulas, if you use them. The forum answer above used <code>now().format("GGGG-[W]WW")</code>.</li>
+</ul>
+<h2>☐ 4. A weekly note with the core Templates plugin</h2>
+<p>You don't need a community plugin to keep weekly notes. The core <strong>Templates</strong> plugin supports three variables: <code>{{title}}</code>, <code>{{date}}</code> and <code>{{time}}</code>. <code>{{date}}</code> and <code>{{time}}</code> accept a Moment format after a colon, for example <code>{{date:YYYY-MM-DD}}</code>.</p>
+<ol>
+<li><strong>Settings → Core plugins → Templates → Template folder location</strong>: set it to your templates folder.</li>
+<li>Create a template like this:</li>
+</ol>
+<pre><code class="language-markdown">---
+week: &quot;{{title}}&quot;
+created: &quot;{{date:YYYY-MM-DD}}&quot;
+tags:
+  - weekly
+---
+
+# {{title}}
+
+## Shipped this week
+-
+
+## Next week: three things only
+1.
+2.
+3.
+</code></pre>
+<ol start="3">
+<li>Create a new note, name it with the week (<code>2026-W42</code>), then run <strong>Templates: Insert template</strong>. <code>{{title}}</code> becomes the note's name.</li>
+</ol>
+<p>Two details matter here:</p>
+<ul>
+<li><strong>Name the note first.</strong> <code>{{title}}</code> is the title of the active note when you insert the template.</li>
+<li><strong><code>{{date}}</code> is today, not "the week this note is for".</strong> If you plan next week on a Sunday, <code>{{date:GGGG-[W]WW}}</code> gives this week's number. Use <code>{{title}}</code> for the week and keep <code>{{date}}</code> for "created on".</li>
+</ul>
+<p>The Obsidian help warns that in Live Preview, the Properties panel can overwrite template variables that are not in quotation marks. Quote them, as in the example, and edit templates in Source mode.</p>
+<h2>☐ 5. Group daily notes by week, without plugins</h2>
+<p>The core <strong>Daily notes</strong> plugin only creates daily notes; there is no built-in weekly option. Its <strong>Date format</strong> can create folders, though. The help page's example <code>YYYY/MMMM/YYYY-MMM-DD</code> creates notes like <code>2023/January/2023-Jan-01</code>. With an ISO-week folder:</p>
+<pre><code>GGGG-[W]WW/YYYY-MM-DD
+</code></pre>
+<p>each daily note lands in a folder such as <code>2026-W42/2026-10-14</code>.</p>
+<p>In the weekly note, list that week's daily notes with an embedded search. The core Search plugin renders a <code>query</code> code block, and <code>path:</code> matches text in the file path:</p>
+<pre><code class="language-markdown">```query
+path:&quot;2026-W42/&quot;
+```
+</code></pre>
+<p>Note: the help page doesn't say what happens to daily notes you already have when you change the date format. Assume they are not moved or renamed, and try the change in a test vault first.</p>
+<h2>☐ 6. Make week names sort correctly</h2>
+<p><code>WW</code> is always two digits (<code>W05</code>, not <code>W5</code>), so <code>GGGG-[W]WW</code> names sort in date order in the file explorer. Single-digit <code>W</code> doesn't: <code>2026-W10</code> sorts before <code>2026-W9</code>.</p>
+<h2>Symptom table</h2>
+<table>
+<thead>
+<tr>
+<th>Symptom</th>
+<th>Cause</th>
+<th>Fix</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Late-December note named <code>2025-W01</code></td>
+<td><code>YYYY</code> with <code>WW</code></td>
+<td><code>GGGG-[W]WW</code> (step 1)</td>
+</tr>
+<tr>
+<td>Early-January note named <code>2027-W53</code></td>
+<td><code>YYYY</code> with <code>WW</code></td>
+<td><code>GGGG-[W]WW</code> (step 1)</td>
+</tr>
+<tr>
+<td>Sundays or Mondays land in the neighbouring week</td>
+<td>ISO week in one place, locale week in another</td>
+<td>Use one system everywhere (steps 2–3)</td>
+</tr>
+<tr>
+<td>Weekly template shows this week when planning next week</td>
+<td><code>{{date}}</code> is the insertion date</td>
+<td>Name the note, use <code>{{title}}</code> (step 4)</td>
+</tr>
+<tr>
+<td>Template property shows the raw <code>{{title}}</code> text, or is wiped</td>
+<td>Unquoted variable edited in Live Preview</td>
+<td>Quote it; edit in Source mode (step 4)</td>
+</tr>
+<tr>
+<td><code>W10</code> sorts before <code>W9</code></td>
+<td>Single-digit <code>W</code></td>
+<td><code>WW</code> (step 6)</td>
+</tr>
+</tbody>
+</table>
+<h2>If you want the weekly system already built</h2>
+<p>If you'd rather start from a working vault than build the structure yourself, <a href="https://kendeepp.gumroad.com/l/huwkwx?utm_source=seo&amp;utm_campaign=weeknum">Indie Weekly</a> ($39) is a ready-to-open Obsidian vault for indie developers. It covers planning the week, logging what shipped, tracking a few metrics and running a Friday review. According to its product page it includes 41 Markdown notes (a Home dashboard, a getting-started guide, a tag convention, a metrics cheatsheet and filled examples from a fictional indie SaaS that you can delete) and 8 templates, including weekly review, ship log, project, idea, decision and experiment. It uses core Obsidian settings only, with no community plugins required; optional ones are listed in its HOW_TO. You unzip it and use <strong>Open folder as vault</strong>. It is made for Obsidian desktop. Mobile hasn't been tested, and the page says the layout may differ there. Its templates use plain-text placeholders that you replace by hand, rather than date variables.</p>
+<h2>Sources</h2>
+<ul>
+<li>Obsidian Help, Templates (template variables, date formats, Properties warning): https://help.obsidian.md/plugins/templates</li>
+<li>Obsidian Help, Daily notes (date format and folders): https://help.obsidian.md/plugins/daily-notes</li>
+<li>Obsidian Help, Search (<code>path:</code> operator, embedding a <code>query</code> block): https://help.obsidian.md/plugins/search</li>
+<li>Moment.js format tokens (<code>GGGG</code>, <code>WW</code>, <code>gggg</code>, <code>ww</code>): https://momentjs.com/docs/#/displaying/format/</li>
+<li>Obsidian Forum, "Incorrect Week number for the week of 2025-12-28": https://forum.obsidian.md/t/incorrect-week-number-for-the-week-of-2025-12-28/109408</li>
+<li>Obsidian Forum, "Incorrect Week Numbers for Weekly Notes [Calendar plugin]": https://forum.obsidian.md/t/incorrect-week-numbers-for-weekly-notes-calendar-plugin/20358</li>
+</ul>
+</article>
+<footer><a href="/">Strataface</a> · <a href="/spreadsheet-guides/">Spreadsheet Guides</a> · <a href="/dev-notes/">Dev Notes</a> · <a href="/obsidian-guides/">Obsidian Guides</a> · <a href="/blender-bake-guides/">Blender Bake Guides</a></footer>
+</body>
+</html>

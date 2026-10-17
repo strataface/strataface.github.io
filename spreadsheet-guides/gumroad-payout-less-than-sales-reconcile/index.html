@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Gumroad Payout Lower Than Your Sales? How to Reconcile It Line by Line</title>
+<meta name="description" content="How to reconcile a Gumroad payout with your sales CSV line by line: fees, PayPal Connect sales, refunds, credits, affiliate commissions, the PayPal payout fee and UTC dates.">
+<link rel="canonical" href="https://strataface.github.io/spreadsheet-guides/gumroad-payout-less-than-sales-reconcile/">
+<style>
+body{font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;max-width:760px;margin:2.5rem auto;padding:0 1.25rem;line-height:1.65;color:#222}
+a{color:#1a5fb4}nav.crumbs{font-size:.9rem;color:#555;margin-bottom:1.5rem}h1{line-height:1.25}h2{margin-top:2.2rem}h3{margin-top:1.6rem}
+p.lead{color:#555;margin-top:0}li{margin:.3rem 0}
+pre{background:#f6f8fa;border:1px solid #e1e4e8;border-radius:6px;padding:.9rem 1rem;overflow-x:auto;font-size:.88rem;line-height:1.45}
+code{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;background:#f6f8fa;padding:.1em .3em;border-radius:4px;font-size:.92em}pre code{background:none;padding:0}
+table{border-collapse:collapse;width:100%;margin:1rem 0;font-size:.93rem;display:block;overflow-x:auto}th,td{border:1px solid #d0d7de;padding:.45rem .6rem;text-align:left;vertical-align:top}th{background:#f6f8fa}
+footer{margin-top:3rem;padding-top:1rem;border-top:1px solid #e1e4e8;font-size:.9rem;color:#555}
+</style>
+</head>
+<body>
+<nav class="crumbs"><a href="/">Strataface</a> › <a href="/spreadsheet-guides/">Spreadsheet Guides</a> › Gumroad Payout Lower Than Your Sales? How to Reconcile It Line by Line</nav>
+<article>
+<h1>Gumroad Payout Lower Than Your Sales? How to Reconcile It Line by Line</h1>
+<p>Your Gumroad dashboard says you sold $800 this month, and the payout is a lot less, or part of the balance seems to have vanished overnight. It's rarely a mistake. A payout is a different number from "sales", for a handful of documented reasons. This page shows how to reconcile one payout against your sales CSV line by line, then explains each adjustment so you know which column or dashboard line to check.</p>
+<p>All rules below are from Gumroad's Help Center as of October 2026. Gumroad changes them occasionally, so check the linked pages if a number looks different.</p>
+<h2>Quick reference: what sits between "sales" and "payout"</h2>
+<table>
+<thead>
+<tr>
+<th>Reason</th>
+<th>Effect</th>
+<th>Where to see it</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Gumroad fee (10% + $0.50 per sale; 30% flat on Discover sales)</td>
+<td>Lower</td>
+<td>Sales CSV <code>Fees ($)</code>, <code>Net Total ($)</code></td>
+</tr>
+<tr>
+<td>Card processing (2.9% + $0.30) and PayPal fees</td>
+<td>Lower</td>
+<td>Gumroad fees page; Connect fee columns</td>
+</tr>
+<tr>
+<td>Payout window: sales through the <strong>previous Friday (UTC)</strong></td>
+<td>Recent sales move to the next payout</td>
+<td>Payout date range</td>
+</tr>
+<tr>
+<td>Sales through your <strong>connected PayPal</strong> account are paid at the time of sale</td>
+<td>Subtracted from the payout</td>
+<td>"PayPal Payouts" line</td>
+</tr>
+<tr>
+<td>Refunds and chargebacks</td>
+<td>Lower; the balance can even go negative</td>
+<td>Sales CSV refund and dispute columns</td>
+</tr>
+<tr>
+<td>Credits (affiliate commissions, chargeback wins, VAT and tax adjustments)</td>
+<td>Up or down</td>
+<td>Payouts dashboard</td>
+</tr>
+<tr>
+<td><strong>2% payout fee</strong> when you're paid to PayPal</td>
+<td>Lower</td>
+<td>Payout breakdown</td>
+</tr>
+<tr>
+<td>$100 minimum balance</td>
+<td>No payout yet; balance carries over</td>
+<td>Payouts dashboard</td>
+</tr>
+<tr>
+<td>Dashboard in your time zone, payouts and CSVs in UTC</td>
+<td>Dates near midnight shift periods</td>
+<td>CSV <code>Purchase Date</code></td>
+</tr>
+</tbody>
+</table>
+<h2>Reconcile one payout, line by line</h2>
+<ol>
+<li><strong>Download the payout CSV.</strong> "You can download a CSV report for each payout from the Payouts dashboard, which includes a breakdown of all Gumroad fees".</li>
+<li><strong>Export the sales CSV</strong> for the payout's date range, plus one day on each side.</li>
+<li><strong>Keep only rows inside the window.</strong> <code>Purchase Date</code> is after the previous payout's cutoff and up to this payout's Friday cutoff (UTC).</li>
+<li><strong>Remove PayPal Connect sales</strong> (check 3). They were paid when the sale happened.</li>
+<li><strong>Sum <code>Net Total ($)</code></strong> for the remaining rows.</li>
+<li><strong>Subtract</strong> refunds and lost disputes charged in this window, and affiliate commissions. <strong>Add or subtract</strong> credits shown on the payout.</li>
+<li><strong>Paid to PayPal?</strong> Subtract the 2% payout fee.</li>
+<li><strong>Compare</strong> with the payout, then compare the payout with what actually arrived in your bank or PayPal account.</li>
+</ol>
+<p>A small template for the last step:</p>
+<table>
+<thead>
+<tr>
+<th>Payout period (UTC)</th>
+<th>Expected</th>
+<th>Payout shown by Gumroad</th>
+<th>Received in bank/PayPal</th>
+<th>Difference</th>
+<th>Status</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>… to Fri 2026-10-09</td>
+<td>412.30</td>
+<td>412.30</td>
+<td>412.30</td>
+<td>0.00</td>
+<td>OK</td>
+</tr>
+<tr>
+<td>… to Fri 2026-10-16</td>
+<td>388.10</td>
+<td>388.10</td>
+<td>—</td>
+<td>—</td>
+<td>PENDING</td>
+</tr>
+</tbody>
+</table>
+<p>The example amounts are made up, to show the layout.</p>
+<p>Note: whether affiliate commissions are already reflected in <code>Net Total ($)</code>, and exactly how credits appear in the payout CSV, aren't spelled out in the Help Center. Check one payout where you know an affiliate sale happened, and adjust the subtraction step if needed.</p>
+<h2>What each adjustment means</h2>
+<h3>☐ 1. Compare against net, not gross</h3>
+<p>Gumroad's fees page: "For sales made on Gumroad's website, we charge a 10% + $0.50 fee + sales tax per transaction." That excludes "Credit card processing (2.9% + $0.30)" and "PayPal fees". Sales through Gumroad's Discover marketplace pay "a flat 30% fee, which includes all processing fees."</p>
+<p>The sales CSV has the per-sale numbers: <code>Sale Price ($)</code>, <code>Fees ($)</code> and <code>Net Total ($)</code> ("sale price - Gumroad's fees"). Add up <code>Net Total ($)</code>, not <code>Sale Price ($)</code>, when you compare with a payout. A <code>Discover?</code> column of 1 marks the 30% sales.</p>
+<p>Note: the Help Center doesn't say whether card processing is inside <code>Fees ($)</code> for every sale type. Compare one sale's CSV row with the same sale in the payout breakdown before relying on it.</p>
+<h3>☐ 2. Use the right payout window</h3>
+<p>For reconciling, you only need the window. "Payouts include sales made through the previous Friday (UTC). On the weekly, monthly, and quarterly schedules, a sale has a minimum 7-day holding period" (daily and instant payouts, available only to some US accounts, don't wait 7 days). So filter your sales CSV by that window, not by the payout date. Sales after the cutoff belong to the next payout.</p>
+<h3>☐ 3. Take out sales that went straight to your PayPal</h3>
+<p>If you connected your PayPal account with Gumroad, PayPal sales are "credited to your connected account at the time of sale". On the payouts dashboard that amount appears as "PayPal Payouts" and "is subtracted from your total sales because it has already been paid out." Those sales show up in PayPal, not in the Gumroad payout. The sales CSV marks them in <code>Payment Type</code>, with a <code>PayPal Transaction ID</code> and <code>PayPal Fee Amount</code>.</p>
+<h3>☐ 4. Account for refunds, chargebacks and negative balances</h3>
+<ul>
+<li>On a refund, "Gumroad's own fee on the refunded portion is returned to you; only the underlying payment-processing portion of the fee is retained". Sales through your own connected Stripe or PayPal work differently.</li>
+<li>Sales CSV columns: <code>Refunded?</code>, <code>Partial Refund ($)</code>, <code>Fully Refunded?</code>, <code>Disputed?</code>, <code>Dispute won?</code>.</li>
+<li>Note: the Help Center doesn't say exactly when a refund on an older sale is deducted. If your balance drops with no new sales, look for refunds or chargebacks on older sales first.</li>
+<li>If the balance goes negative, Gumroad's payment processor "may debit your bank account".</li>
+</ul>
+<h3>☐ 5. Look at credits and affiliate commissions</h3>
+<p>Credits are "one-off financial adjustments" that "may be positive or negative": for example a won chargeback, VAT refunds or Australian back-taxes. They "are included as part of your weekly payouts". Affiliate commissions appear in the CSV as <code>Affiliate commission ($)</code> and "show up in your balance page as negative credits".</p>
+<h3>☐ 6. Paid to PayPal? Subtract the 2% payout fee</h3>
+<p>"PayPal payouts have a 2% payout fee", and "All PayPal payouts are processed in USD". This is separate from PayPal's fees on sales (check 3). For bank payouts in local currency, "currency conversions happen based on the exchange rates at the time of sale, not at the time of the payout", so the deposit won't match today's exchange rate.</p>
+<h3>☐ 7. Check the minimum and the account status</h3>
+<p>"You need a minimum balance of $100 USD to receive a payout" (some countries have higher local minimums). Below that, the balance carries over. If a payout is skipped entirely rather than smaller, read Gumroad's payout-delays article and check your payout settings.</p>
+<h3>☐ 8. Mind the time zone</h3>
+<p>The payouts page "is synced to UTC" while the rest of the dashboard uses your account's time zone, so totals for "the same period" can differ slightly. The sales CSV is in UTC too. Gumroad suggests adding "a one-day buffer to the beginning and end of your date range" when you export.</p>
+<h2>Symptom table</h2>
+<table>
+<thead>
+<tr>
+<th>Symptom</th>
+<th>Check</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Payout well below the sales total</td>
+<td>Checks 1, 6</td>
+</tr>
+<tr>
+<td>Last week's sales missing</td>
+<td>Check 2 (payout window)</td>
+</tr>
+<tr>
+<td>Payout far below the dashboard, PayPal connected</td>
+<td>Check 3</td>
+</tr>
+<tr>
+<td>Balance dropped overnight</td>
+<td>Check 4 (refund or chargeback on an older sale)</td>
+</tr>
+<tr>
+<td>Small unexplained plus or minus</td>
+<td>Check 5 (credits), check 8 (UTC)</td>
+</tr>
+<tr>
+<td>No payout at all</td>
+<td>Check 7</td>
+</tr>
+</tbody>
+</table>
+<h2>If you sell on more than one platform</h2>
+<p>Doing this every week for Gumroad, plus Lemon Squeezy and Payhip, gets old. <a href="https://kendeepp.gumroad.com/l/avawo?utm_source=seo&amp;utm_campaign=gumpayout">Solo OS</a> ($29, Google Sheets) is a finance sheet for one-person online sellers. According to its product page, you paste your Gumroad, Lemon Squeezy and Payhip sales exports, and columns are matched by header name. It then deducts platform fees, affiliate commissions, PayPal/Stripe Connect fees, refunds and lost disputes to get net income, and converts it to your home currency with default or monthly FX rates. Its payout reconciliation matches <strong>PayPal and Payoneer</strong> deposits against what each platform owes you and marks each platform OK, PENDING or CHECK. If Gumroad pays you to a bank account, that deposit matching won't see it. It also has a monthly dashboard and tax-form reminders, and an English/Chinese interface. Its listed limits: not tax advice; 500 rows per platform tab by default; and the sample CSVs' headers are built from each platform's documentation, not checked against real seller exports, so rename headers if yours differ.</p>
+<h2>Sources</h2>
+<ul>
+<li>Gumroad Help Center, Getting paid by Gumroad (schedule, minimum, PayPal payout fee, currency): https://gumroad.com/help/article/13-getting-paid</li>
+<li>Gumroad Help Center, The payouts dashboard (PayPal payouts, credits, payout period, UTC): https://gumroad.com/help/article/269-balance-page</li>
+<li>Gumroad Help Center, Gumroad's fees (fees, Discover, refunds): https://gumroad.com/help/article/66-gumroads-fees</li>
+<li>Gumroad Help Center, The sales analytics dashboard (sales CSV columns, UTC buffer): https://gumroad.com/help/article/74-the-analytics-dashboard</li>
+<li>Gumroad Help Center, Payout delays: https://gumroad.com/help/article/281-payout-delays</li>
+</ul>
+</article>
+<footer><a href="/">Strataface</a> · <a href="/spreadsheet-guides/">Spreadsheet Guides</a> · <a href="/dev-notes/">Dev Notes</a> · <a href="/obsidian-guides/">Obsidian Guides</a> · <a href="/blender-bake-guides/">Blender Bake Guides</a></footer>
+</body>
+</html>

@@ -1,0 +1,187 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>n8n Webhook Runs Twice? How to Stop Duplicate Shopify Orders, Emails and Refunds</title>
+<meta name="description" content="Why an n8n webhook runs twice and how to stop duplicate Shopify orders, emails and refunds: fast responses, dedupe keys, an atomic claim table and idempotency keys.">
+<link rel="canonical" href="https://strataface.github.io/dev-notes/n8n-webhook-runs-twice-duplicate-shopify/">
+<style>
+body{font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;max-width:760px;margin:2.5rem auto;padding:0 1.25rem;line-height:1.65;color:#222}
+a{color:#1a5fb4}nav.crumbs{font-size:.9rem;color:#555;margin-bottom:1.5rem}h1{line-height:1.25}h2{margin-top:2.2rem}h3{margin-top:1.6rem}
+p.lead{color:#555;margin-top:0}li{margin:.3rem 0}
+pre{background:#f6f8fa;border:1px solid #e1e4e8;border-radius:6px;padding:.9rem 1rem;overflow-x:auto;font-size:.88rem;line-height:1.45}
+code{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;background:#f6f8fa;padding:.1em .3em;border-radius:4px;font-size:.92em}pre code{background:none;padding:0}
+table{border-collapse:collapse;width:100%;margin:1rem 0;font-size:.93rem;display:block;overflow-x:auto}th,td{border:1px solid #d0d7de;padding:.45rem .6rem;text-align:left;vertical-align:top}th{background:#f6f8fa}
+footer{margin-top:3rem;padding-top:1rem;border-top:1px solid #e1e4e8;font-size:.9rem;color:#555}
+</style>
+</head>
+<body>
+<nav class="crumbs"><a href="/">Strataface</a> › <a href="/dev-notes/">Dev Notes</a> › n8n Webhook Runs Twice? How to Stop Duplicate Shopify Orders, Emails and Refunds</nav>
+<article>
+<h1>n8n Webhook Runs Twice? How to Stop Duplicate Shopify Orders, Emails and Refunds</h1>
+<p>One Shopify order, two executions in n8n. Sometimes it's harmless, just a second log line. Sometimes it's two "your order shipped" emails, two rows in your CRM, or, worst case, two refunds. This happens to n8n users regularly, and in most cases neither n8n nor Shopify is broken. Webhooks are built to be delivered more than once.</p>
+<p>This checklist covers Shopify webhooks in n8n, but the same steps apply to Stripe, Lemon Squeezy, Gumroad and most other webhook senders.</p>
+<h2>Why the same event arrives twice</h2>
+<ul>
+<li><strong>Shopify can redeliver.</strong> Shopify's webhook docs: "Shopify minimizes duplicate deliveries, but your app might receive the same webhook more than once, for example after a network timeout or a retry."</li>
+<li><strong>Slow responses count as failures.</strong> "Your app must respond to the webhook within five seconds." A delivery that doesn't get a 2xx in time fails and is retried. Shopify "retries failed webhook calls up to eight times in a four-hour period", and if failures continue, it removes the subscription.</li>
+<li><strong>Two subscriptions, two deliveries.</strong> If more than one subscription exists for the same topic, each gets its own delivery.</li>
+<li><strong>n8n retries.</strong> A node with <strong>Retry On Fail</strong> reruns after an error. If the first request actually succeeded and only the response was lost, the retry repeats the side effect.</li>
+</ul>
+<p>So the target is not "make sure it only runs once". It is: <strong>running it twice must have the same effect as running it once.</strong></p>
+<h2>Quick reference</h2>
+<ol>
+<li>Respond to Shopify quickly, before slow work.</li>
+<li>Pick the right dedupe key: <code>X-Shopify-Webhook-Id</code> per delivery, or a business ID (order ID + action).</li>
+<li>First layer: the <strong>Remove Duplicates</strong> node with "Remove Items Processed in Previous Executions".</li>
+<li>Second layer, before any irreversible step: claim the key with an atomic insert.</li>
+<li>Pass an idempotency key to APIs that support one.</li>
+<li>Keep <strong>Retry On Fail</strong> off on nodes that create, charge, refund or send.</li>
+<li>Test with a replay and with two concurrent copies.</li>
+</ol>
+<h2>☐ 1. Respond within Shopify's 5 seconds</h2>
+<p>n8n's <strong>Webhook</strong> node has these <strong>Respond</strong> modes:</p>
+<ul>
+<li><strong>Immediately</strong>: returns the response code and the message "Workflow got started".</li>
+<li><strong>When Last Node Finishes</strong>: waits for the whole workflow and returns the last node's output.</li>
+<li><strong>Using 'Respond to Webhook' Node</strong>: responds wherever you put that node.</li>
+</ul>
+<p>If the workflow calls an AI model, a store API or a mail service before it responds, it can easily take more than 5 seconds, and Shopify will retry. Respond first: use <strong>Immediately</strong>, or put <strong>Respond to Webhook</strong> right after the trigger and any signature check. Then do the slow work.</p>
+<p>Note: in one n8n community thread, several users reported two executions for every webhook call. One of them said it stopped after switching the respond mode from "Immediately" to "When Last Node Finishes". No cause was confirmed in that thread. If you see an exact 2× on every call (not occasional duplicates), check for a second active workflow or a second subscription with the same path before changing modes.</p>
+<h2>☐ 2. Choose the dedupe key</h2>
+<p>Shopify's docs name the header to use: "use the X-Shopify-Webhook-Id header to detect and skip duplicates". They also say that with multiple subscriptions for one topic, each delivery "has a different X-Shopify-Webhook-Id but shares the same X-Shopify-Event-Id". Use the Webhook ID to drop repeated deliveries and the Event ID to group deliveries of the same merchant action.</p>
+<p>In a <strong>Webhook</strong> node, request headers are in the output, so you can reference them as <code>{{ $json.headers["x-shopify-webhook-id"] }}</code>.</p>
+<p>Note: header names usually arrive in lower case in n8n's webhook output. Check one real execution before you write the expression. The dedicated <strong>Shopify Trigger</strong> node may not output request headers. In that case use a business key.</p>
+<p><strong>Business keys</strong> describe what should happen only once, for example <code>orders-create:&lt;order id&gt;</code> or <code>refund:&lt;order id&gt;:&lt;approval id&gt;</code>. For <code>orders/create</code>, the order ID is a natural key, because an order is only created once. For a refund, tie the key to the refund decision, not just the order. An order can legitimately get two partial refunds.</p>
+<p>Never build the key from <code>$execution.id</code>, <code>$now</code> or a random UUID. Every run gets a new value, so nothing is ever recognised as a duplicate.</p>
+<h2>☐ 3. First layer: Remove Duplicates across executions</h2>
+<p>The <strong>Remove Duplicates</strong> node can remember items between runs. Its docs describe the version overhauled in n8n 1.64.0; on older versions, check the previous docs.</p>
+<ul>
+<li><strong>Operation:</strong> Remove Items Processed in Previous Executions</li>
+<li><strong>Keep Items Where:</strong> Value Is New</li>
+<li><strong>Value to Dedupe On:</strong> your key from step 2</li>
+<li><strong>Scope:</strong> Node (default) or Workflow</li>
+<li><strong>History Size:</strong> the number of items to remember. The default is 10,000.</li>
+</ul>
+<p>Put it right after the trigger (and after the respond step). A redelivered webhook then stops there with no output. <strong>Clear Deduplication History</strong> resets the memory if you need to reprocess.</p>
+<p>Note: this is a good filter for deliveries that arrive seconds or minutes apart. n8n community answers point out that the check isn't atomic, so two copies arriving at the same instant can both pass. The n8n docs don't address concurrency either way. Treat the node as a filter, not as the guarantee for money-moving steps.</p>
+<h2>☐ 4. Second layer: claim the key atomically before side effects</h2>
+<p>For anything you can't undo (refunds, charges, inventory changes, sending to a customer), claim the key in a database with a unique constraint:</p>
+<pre><code class="language-sql">CREATE TABLE IF NOT EXISTS processed_actions (
+  action_key text PRIMARY KEY,
+  status     text NOT NULL DEFAULT 'pending',
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+
+INSERT INTO processed_actions (action_key)
+VALUES ($1)
+ON CONFLICT DO NOTHING
+RETURNING action_key;
+</code></pre>
+<p>In PostgreSQL, <code>ON CONFLICT DO NOTHING</code> "simply avoids inserting a row", and <code>RETURNING</code> returns values only for rows "actually inserted". In n8n:</p>
+<ol>
+<li><strong>Postgres</strong> node runs the insert with your key as the parameter.</li>
+<li><strong>IF</strong> node: did it return a row?
+   - <strong>Yes:</strong> this execution owns the action. Continue.
+   - <strong>No:</strong> another execution already claimed it. Stop, successfully. It is not an error.</li>
+<li>After the side effect succeeds, update <code>status</code> to <code>done</code>.</li>
+</ol>
+<p>If a run dies between the claim and the side effect, the row stays <code>pending</code>. Before retrying a <code>pending</code> key, check on the provider's side whether the action already happened, instead of blindly sending it again.</p>
+<h2>☐ 5. Pass an idempotency key to APIs that accept one</h2>
+<p>Some APIs deduplicate for you. Stripe documents an <code>Idempotency-Key</code> request header: retries with the same key return the saved response. In an <strong>HTTP Request</strong> node, send your business key from step 2 in that header. Check your provider's docs. Not every API supports idempotency keys, and not every operation within an API does.</p>
+<h2>☐ 6. Keep Retry On Fail away from side effects</h2>
+<p>n8n's node settings describe <strong>Retry On Fail</strong> as: "When an execution fails, the node reruns until it succeeds." That's fine for reads. For a POST that creates, charges, refunds or sends, a timeout doesn't tell you whether the first attempt went through.</p>
+<ul>
+<li>Turn Retry On Fail off on those nodes, or</li>
+<li>Keep it on only when the request carries an idempotency key the API honours (step 5), or the action is protected by the claim from step 4.</li>
+</ul>
+<h2>☐ 7. Test it on purpose</h2>
+<p>Before trusting a workflow that moves money or messages customers:</p>
+<table>
+<thead>
+<tr>
+<th>Test</th>
+<th>Expected</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Send one event</td>
+<td>One action</td>
+</tr>
+<tr>
+<td>Replay the same event</td>
+<td>No new action; execution ends successfully</td>
+</tr>
+<tr>
+<td>Send two copies at the same time</td>
+<td>Exactly one action</td>
+</tr>
+<tr>
+<td>Same order, a genuinely new event (for example a second partial refund)</td>
+<td>Processed as new</td>
+</tr>
+<tr>
+<td>Kill the run after the side effect, then retry</td>
+<td>No second action</td>
+</tr>
+</tbody>
+</table>
+<p>To replay, send a payload you captured from a real execution to your webhook URL again (for example with <code>curl</code>). For the concurrency test, start two of those requests at the same moment. Use a development store and test-mode credentials for anything that moves money.</p>
+<h2>Symptom table</h2>
+<table>
+<thead>
+<tr>
+<th>Symptom</th>
+<th>Likely cause</th>
+<th>Fix</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Occasional double execution for one order</td>
+<td>Shopify redelivery after a slow or failed response</td>
+<td>Respond fast (1) + dedupe (2–3)</td>
+</tr>
+<tr>
+<td>Exactly 2 executions for every call</td>
+<td>Duplicate subscription or active workflow; see the Note in step 1</td>
+<td>Check registrations; dedupe anyway</td>
+</tr>
+<tr>
+<td>Duplicate passes Remove Duplicates</td>
+<td>Two copies arrived concurrently</td>
+<td>Atomic claim (4)</td>
+</tr>
+<tr>
+<td>Charged or refunded twice after a timeout</td>
+<td>Retry On Fail on a POST</td>
+<td>Idempotency key (5) / retry off (6)</td>
+</tr>
+<tr>
+<td>Dedupe never triggers</td>
+<td>Key built from execution ID or time</td>
+<td>Key from the event or business ID (2)</td>
+</tr>
+</tbody>
+</table>
+<h2>If you're building store support or refunds in n8n</h2>
+<p>The <a href="https://kendeepp.gumroad.com/l/uodnmm?utm_source=seo&amp;utm_campaign=n8ndupes">Store Support Agent Pack for n8n</a> is a pack of 8 n8n workflow JSON files for online stores that you import into your own n8n. Its Refunds scenario ($39 per scenario, $79 for all 8) builds these guards into refund triage, risk check and execution. According to its product page, refunds use idempotency keys, per-order locking and a store-side "already refunded" check. In its workflow tests (against the bundled mock store), resending a request, or sending 10 at the same time, still created exactly one refund. Refunds only run when you call workflow 08 with <code>decision</code> set to <code>approve</code>, and the docs ask for one <code>Idempotency-Key</code> per refund decision. Invalid model output or API errors get one corrective retry and then go to a human; no money moves on bad output.</p>
+<p>It works with Shopify through an included adapter for the Admin GraphQL API. The page says the adapter was unit-tested against simulated Shopify responses, not a live store, and recommends a $1 refund on a development store first. Other stores connect through 6 documented endpoints. Any OpenAI-compatible model works. The workflows were tested on n8n 1.123.84, self-hosted and in a Cloud-style setup.</p>
+<h2>Sources</h2>
+<ul>
+<li>Shopify, Verify webhook deliveries (ignoring duplicates, X-Shopify-Webhook-Id vs X-Shopify-Event-Id): https://shopify.dev/docs/apps/build/webhooks/ignore-duplicates</li>
+<li>Shopify, Troubleshoot webhooks (5-second response, 8 retries in 4 hours): https://shopify.dev/docs/apps/build/webhooks/troubleshooting-webhooks</li>
+<li>n8n Docs, Webhook node (Respond modes): https://docs.n8n.io/integrations/builtin/core-nodes/n8n-nodes-base.webhook/</li>
+<li>n8n Docs, Remove Duplicates node: https://docs.n8n.io/integrations/builtin/core-nodes/n8n-nodes-base.removeduplicates/</li>
+<li>n8n Docs, Node settings (Retry On Fail): https://docs.n8n.io/workflows/components/nodes/</li>
+<li>PostgreSQL, INSERT (ON CONFLICT, RETURNING): https://www.postgresql.org/docs/current/sql-insert.html</li>
+<li>Stripe API, Idempotent requests: https://docs.stripe.com/api/idempotent_requests</li>
+<li>n8n Community, "How to deduplicate Shopify "orders/create" webhook triggers in n8n": https://community.n8n.io/t/how-to-deduplicate-shopify-orders-create-webhook-triggers-in-n8n-occasional-duplicate-firings/314083</li>
+<li>n8n Community, "Webhook receiving duplicate executions, doubling execution count": https://community.n8n.io/t/webhook-receiving-duplicate-executions-doubling-execution-count/197126</li>
+</ul>
+</article>
+<footer><a href="/">Strataface</a> · <a href="/spreadsheet-guides/">Spreadsheet Guides</a> · <a href="/dev-notes/">Dev Notes</a> · <a href="/obsidian-guides/">Obsidian Guides</a> · <a href="/blender-bake-guides/">Blender Bake Guides</a></footer>
+</body>
+</html>

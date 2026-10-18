@@ -1,0 +1,195 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>n8n &quot;access to env vars denied&quot;? Fix $env on Self-Hosted n8n 2.x, and What to Use on n8n Cloud</title>
+<meta name="description" content="Why n8n says &quot;access to env vars denied&quot;: N8N_BLOCK_ENV_ACCESS_IN_NODE on self-hosted n8n 2.x, what turning it off exposes, and Config node, $vars and credentials on n8n Cloud.">
+<link rel="canonical" href="https://strataface.github.io/dev-notes/n8n-access-to-env-vars-denied/">
+<style>
+body{font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;max-width:760px;margin:2.5rem auto;padding:0 1.25rem;line-height:1.65;color:#222}
+a{color:#1a5fb4}nav.crumbs{font-size:.9rem;color:#555;margin-bottom:1.5rem}h1{line-height:1.25}h2{margin-top:2.2rem}h3{margin-top:1.6rem}
+p.lead{color:#555;margin-top:0}li{margin:.3rem 0}
+pre{background:#f6f8fa;border:1px solid #e1e4e8;border-radius:6px;padding:.9rem 1rem;overflow-x:auto;font-size:.88rem;line-height:1.45}
+code{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;background:#f6f8fa;padding:.1em .3em;border-radius:4px;font-size:.92em}pre code{background:none;padding:0}
+table{border-collapse:collapse;width:100%;margin:1rem 0;font-size:.93rem;display:block;overflow-x:auto}th,td{border:1px solid #d0d7de;padding:.45rem .6rem;text-align:left;vertical-align:top}th{background:#f6f8fa}
+footer{margin-top:3rem;padding-top:1rem;border-top:1px solid #e1e4e8;font-size:.9rem;color:#555}
+</style>
+</head>
+<body>
+<nav class="crumbs"><a href="/">Strataface</a> › <a href="/dev-notes/">Dev Notes</a> › n8n &quot;access to env vars denied&quot;? Fix $env on Self-Hosted n8n 2.x, and What to Use on n8n Cloud</nav>
+<article>
+<h1>n8n &quot;access to env vars denied&quot;? Fix $env on Self-Hosted n8n 2.x, and What to Use on n8n Cloud</h1>
+<p>You put <code>{{ $env.API_BASE_URL }}</code> in an HTTP Request node, or <code>$env.MY_KEY</code> in a Code node, and n8n answers with <code>access to env vars denied</code>. On a fresh self-hosted install that's now the default behaviour, not a misconfiguration. On n8n Cloud there's nothing to switch off at all. This checklist covers why it happens, how to allow <code>$env</code> on your own server, what that exposes, and what to use instead when you can't, or shouldn't, read environment variables from a workflow.</p>
+<h2>Quick reference</h2>
+<table>
+<thead>
+<tr>
+<th>Situation</th>
+<th>Fix</th>
+<th>Check</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Self-hosted n8n 2.x, <code>$env</code> denied everywhere</td>
+<td>Set <code>N8N_BLOCK_ENV_ACCESS_IN_NODE=false</code> on the n8n process and restart it</td>
+<td>1, 2</td>
+</tr>
+<tr>
+<td>Setting changed, still denied</td>
+<td>Value isn't exactly <code>false</code>, or the container wasn't recreated</td>
+<td>2</td>
+</tr>
+<tr>
+<td>No error, but the value is empty</td>
+<td>The variable isn't set in the n8n process itself</td>
+<td>3</td>
+</tr>
+<tr>
+<td>n8n Cloud</td>
+<td>Can't change it; use a Config node, <code>$vars</code> or credentials</td>
+<td>5, 6</td>
+</tr>
+<tr>
+<td>API keys in <code>$env</code></td>
+<td>Move them to credentials</td>
+<td>4</td>
+</tr>
+<tr>
+<td>Python Code node, <code>os.environ</code> empty</td>
+<td>Separate setting: <code>N8N_BLOCK_RUNNER_ENV_ACCESS</code></td>
+<td>7</td>
+</tr>
+</tbody>
+</table>
+<h2>☐ 1. Know why the error appears</h2>
+<p>n8n's 2.0 breaking-changes page: "The default value for <code>N8N_BLOCK_ENV_ACCESS_IN_NODE</code> is now set to <code>true</code>."</p>
+<ul>
+<li>In n8n's source (the <code>$env</code> provider in the <code>workflow</code> package), access is blocked unless the variable is exactly the string <code>false</code>. If it isn't set at all, <code>$env</code> is blocked.</li>
+<li>The error n8n throws is <code>access to env vars denied</code>, with the detail "If you need access please contact the administrator to remove the environment variable ‘N8N_BLOCK_ENV_ACCESS_IN_NODE‘".</li>
+<li>The environment variable reference describes the setting as "Whether to allow users to access environment variables in expressions and the Code node", so it covers both node parameter expressions and the Code node, not just code.</li>
+</ul>
+<p>Note: the environment variable reference table still lists the default as <code>false</code>, which contradicts the 2.0 breaking-changes page and the current source. The behaviour on 2.x follows the source: unset means blocked.</p>
+<p>So if your workflow worked on n8n 1.x and broke after an upgrade to 2.x, this is the most likely reason.</p>
+<h2>☐ 2. Self-hosted: allow <code>$env</code> (if you decide to)</h2>
+<p>Set the variable on the n8n process, then recreate it so the new environment is picked up.</p>
+<p>Docker Compose:</p>
+<pre><code class="language-yaml">services:
+  n8n:
+    image: docker.n8n.io/n8nio/n8n
+    environment:
+      - N8N_BLOCK_ENV_ACCESS_IN_NODE=false
+      - API_BASE_URL=https://api.example.com
+</code></pre>
+<p>Then run <code>docker compose up -d</code>. Compose recreates the container when its environment changes. A plain <code>docker restart</code> keeps the old environment.</p>
+<p><code>docker run</code>: add <code>-e N8N_BLOCK_ENV_ACCESS_IN_NODE=false</code> and start a new container. You can't add environment variables to an existing container.</p>
+<ul>
+<li>The value must be lowercase <code>false</code>. In the source check, <code>False</code>, <code>0</code> or <code>no</code> all leave access blocked.</li>
+<li>To confirm what the process actually sees, run <code>docker compose exec n8n env</code> and look for the variable.</li>
+<li>Note: in queue mode, workflows run on the worker processes. n8n's queue-mode docs already require workers to share the main instance's encryption key. Set this variable, and any variables your workflows read, on the workers as well.</li>
+</ul>
+<h2>☐ 3. Make sure the variable exists where n8n runs</h2>
+<p>Allowing access doesn't create the variables. In the source, <code>$env.NAME</code> simply returns whatever the n8n process has under <code>NAME</code>, so a missing variable gives an empty value, not an error.</p>
+<ul>
+<li>Variables in a <code>.env</code> file next to <code>docker-compose.yml</code> are used for substitution in the Compose file. They only reach the container if the service passes them in, through <code>environment:</code> or <code>env_file:</code>.</li>
+<li>Names are case-sensitive: <code>$env.api_base_url</code> and <code>$env.API_BASE_URL</code> are different.</li>
+<li>Note: forum answers report that the expression preview in the editor can show an error even when the variable is configured. Execute the node and check its output before changing anything else.</li>
+</ul>
+<h2>☐ 4. Know what you expose when you turn it off</h2>
+<p>With access allowed, <code>$env</code> reads from the n8n process's full environment. There's no per-variable allowlist in n8n core: an optional allowlist was proposed in pull request #39831, which was still open as of October 2026.</p>
+<ul>
+<li>Anyone who can edit a workflow can read any variable the n8n process has, including database passwords or <code>N8N_ENCRYPTION_KEY</code> if you set them as environment variables.</li>
+<li>The 2.0 breaking-changes page says: "For sensitive data, use credentials or other secure methods instead of environment variables."</li>
+<li>n8n encrypts stored credentials with <code>N8N_ENCRYPTION_KEY</code> ("Provide a custom key used to encrypt credentials in the n8n database"). For an API key, a credential such as <strong>Header Auth</strong> is the safer place.</li>
+</ul>
+<p>A reasonable split: non-secret settings (base URLs, model names, limits) in <code>$env</code> or a Config node, and secrets in credentials only.</p>
+<h2>☐ 5. n8n Cloud: there's no switch</h2>
+<p>You can't set environment variables on n8n Cloud. In forum answers from 2021 and 2023, n8n team members say this directly: it's "currently not possible to … set environment variables" on n8n Cloud, and "You wouldn't be able to change that setting on n8n cloud, only if you were self-hosting".</p>
+<p>Note: those answers are a few years old. Check your Cloud plan's settings, but plan for <code>$env</code> not being available.</p>
+<p>The plan-independent option is a Config node.</p>
+<ul>
+<li>Add an <strong>Edit Fields (Set)</strong> node right after the trigger. Name it <code>Config</code>, and give it fields such as <code>api_base_url</code> and <code>model</code>.</li>
+<li>Reference it anywhere later in the workflow with <code>{{ $('Config').item.json.api_base_url }}</code>.</li>
+<li>Keep secrets out of it. Workflow JSON travels with exports and copy-paste, so put keys in credentials.</li>
+<li>When you import a workflow built for self-hosting, replace every <code>$env.X</code> with the matching Config field. Search the workflow JSON for <code>$env</code> before you import, so you don't miss one inside a Code node.</li>
+</ul>
+<h2>☐ 6. Custom variables (<code>$vars</code>) on paid plans</h2>
+<p>n8n's custom variables are an alternative to <code>$env</code> that you manage in the UI.</p>
+<ul>
+<li>Availability, per the docs: n8n Cloud Pro and Enterprise, self-hosted Business and Enterprise. "Only instance owners and admins can create variables."</li>
+<li>Use them in expressions and the Code node as <code>$vars.&lt;variable-name&gt;</code>. "All variables are strings." A missing variable is <code>undefined</code>, and the workflow doesn't fail on its own.</li>
+<li>Keys and values may only use letters, numbers and underscores. Keys are limited to 50 characters, values to 1,000.</li>
+<li>From n8n 1.118.0, variables can be project-scoped. A project variable with the same key overrides the global one inside that project.</li>
+<li>They're read-only in workflows: you change them in the UI.</li>
+</ul>
+<h2>☐ 7. Python Code node: a separate setting</h2>
+<p>The task runner docs list <code>N8N_BLOCK_RUNNER_ENV_ACCESS</code> (default <code>true</code>): "Whether to block access to the runner's environment from within Python code tasks." <code>N8N_BLOCK_ENV_ACCESS_IN_NODE</code> doesn't change this.</p>
+<ul>
+<li>If you run task runners in external mode, the docs say several runner settings belong in the runners config file (<code>/etc/n8n-task-runners.json</code>) as an <code>env-override</code>, not as container environment variables.</li>
+<li>Note: the docs don't say whether <code>N8N_BLOCK_RUNNER_ENV_ACCESS</code> follows that rule. If setting it on the runner container doesn't work, try the config file.</li>
+</ul>
+<h2>Symptom table</h2>
+<table>
+<thead>
+<tr>
+<th>Symptom</th>
+<th>Likely cause</th>
+<th>Check</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>access to env vars denied</code> after upgrading to 2.x</td>
+<td>New default blocks <code>$env</code></td>
+<td>1, 2</td>
+</tr>
+<tr>
+<td>Still denied after setting the variable</td>
+<td>Value not exactly <code>false</code>, container not recreated, or set on main but not workers</td>
+<td>2</td>
+</tr>
+<tr>
+<td>Expression is empty, no error</td>
+<td>Variable not passed into the container</td>
+<td>3</td>
+</tr>
+<tr>
+<td>Works when executed, error in the editor preview</td>
+<td>Preview limitation reported on the forum</td>
+<td>3</td>
+</tr>
+<tr>
+<td>Template from the internet fails on n8n Cloud</td>
+<td>It reads <code>$env</code></td>
+<td>5</td>
+</tr>
+<tr>
+<td><code>$vars</code> not available</td>
+<td>Plan without custom variables</td>
+<td>6</td>
+</tr>
+</tbody>
+</table>
+<h2>Workflows that ship both ways</h2>
+<p>The <a href="https://kendeepp.gumroad.com/l/uodnmm?utm_source=seo&amp;utm_campaign=envaccess">Store Support Agent Pack for n8n</a> is a pack of 8 n8n workflow JSON files for online stores: order status replies, ticket triage, FAQ answers, review replies and refund triage. You import them into your own n8n and run them with your own model API key. According to its product page, it comes as two sets. The self-hosted workflows read their settings from environment variables. A separate n8n Cloud set uses credentials and a Config node instead, and was workflow-tested with env access blocked. Its docs cover install, n8n Cloud setup, and the env vars and store API contract. Note: the pack's own env var doc says the self-hosted set needs <code>N8N_BLOCK_ENV_ACCESS_IN_NODE=false</code> on n8n 2.x (check 2). If you'd rather keep <code>$env</code> blocked, use the Cloud set on your own server too. A single scenario is $39 and the full pack is $79. Its listed limits: it was workflow-tested on n8n 1.123.84, and the Shopify adapter is unit-tested against simulated Shopify responses, not yet a live store.</p>
+<h2>Sources</h2>
+<ul>
+<li>n8n docs, n8n 2.0 breaking changes (Block environment variable access from Code Node by default): https://docs.n8n.io/2-0-breaking-changes/</li>
+<li>n8n docs, Security environment variables (<code>N8N_BLOCK_ENV_ACCESS_IN_NODE</code>): https://docs.n8n.io/hosting/configuration/environment-variables/security/</li>
+<li>n8n source, <code>$env</code> provider (<code>createEnvProviderState</code>, error text): https://github.com/n8n-io/n8n/blob/master/packages/workflow/src/workflow-data-proxy-env-provider.ts</li>
+<li>n8n docs, Custom variables (<code>$vars</code>, availability, limits, scope): https://docs.n8n.io/code/variables/</li>
+<li>n8n docs, Deployment environment variables (<code>N8N_ENCRYPTION_KEY</code>): https://docs.n8n.io/hosting/configuration/environment-variables/deployment/</li>
+<li>n8n docs, Queue mode (shared encryption key for workers): https://docs.n8n.io/hosting/scaling/queue-mode/</li>
+<li>n8n docs, Task runner environment variables (<code>N8N_BLOCK_RUNNER_ENV_ACCESS</code>): https://docs.n8n.io/hosting/configuration/environment-variables/task-runners/</li>
+<li>n8n pull request #39831, scoped <code>$env</code> allowlist (open): https://github.com/n8n-io/n8n/pull/39831</li>
+<li>n8n community, No access to $env: https://community.n8n.io/t/no-access-to-env/20665</li>
+<li>n8n community, How N8N_BLOCK_ENV_ACCESS_IN_NODE should work?: https://community.n8n.io/t/how-n8n-block-env-access-in-node-should-work/30474</li>
+<li>n8n community, How do I set ENV Variables in n8n cloud?: https://community.n8n.io/t/how-do-i-set-env-variables-in-n8n-cloud/9292</li>
+<li>n8n community, How can I remove the n8n_block_env_access_in_node in cloud?: https://community.n8n.io/t/how-can-i-remove-the-n8n-block-env-access-in-node-in-cloud/28827</li>
+<li>n8n community, How to allow env vars access in set fields or credentials via JS expressions?: https://community.n8n.io/t/how-to-allow-env-vars-access-in-set-fields-or-credentials-via-js-expressions/273453</li>
+</ul>
+</article>
+<footer><a href="/">Strataface</a> · <a href="/spreadsheet-guides/">Spreadsheet Guides</a> · <a href="/dev-notes/">Dev Notes</a> · <a href="/obsidian-guides/">Obsidian Guides</a> · <a href="/blender-bake-guides/">Blender Bake Guides</a></footer>
+</body>
+</html>

@@ -1,0 +1,203 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Obsidian Nested Tags: Search a Parent Tag, Exclude Sub-Tags, or Match Only the Parent</title>
+<meta name="description" content="How nested tags work in Obsidian core Search: what tag:#parent matches, why excluding a sub-tag hides whole notes, parent-only and last-segment regex searches, property tags and graph colour groups.">
+<link rel="canonical" href="https://strataface.github.io/obsidian-guides/obsidian-nested-tags-search-exclude-subtags/">
+<style>
+body{font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;max-width:760px;margin:2.5rem auto;padding:0 1.25rem;line-height:1.65;color:#222}
+a{color:#1a5fb4}nav.crumbs{font-size:.9rem;color:#555;margin-bottom:1.5rem}h1{line-height:1.25}h2{margin-top:2.2rem}h3{margin-top:1.6rem}
+p.lead{color:#555;margin-top:0}li{margin:.3rem 0}
+pre{background:#f6f8fa;border:1px solid #e1e4e8;border-radius:6px;padding:.9rem 1rem;overflow-x:auto;font-size:.88rem;line-height:1.45}
+code{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;background:#f6f8fa;padding:.1em .3em;border-radius:4px;font-size:.92em}pre code{background:none;padding:0}
+table{border-collapse:collapse;width:100%;margin:1rem 0;font-size:.93rem;display:block;overflow-x:auto}th,td{border:1px solid #d0d7de;padding:.45rem .6rem;text-align:left;vertical-align:top}th{background:#f6f8fa}
+footer{margin-top:3rem;padding-top:1rem;border-top:1px solid #e1e4e8;font-size:.9rem;color:#555}
+</style>
+</head>
+<body>
+<nav class="crumbs"><a href="/">Strataface</a> › <a href="/obsidian-guides/">Obsidian Guides</a> › Obsidian Nested Tags: Search a Parent Tag, Exclude Sub-Tags, or Match Only the Parent</nav>
+<article>
+<h1>Obsidian Nested Tags: Search a Parent Tag, Exclude Sub-Tags, or Match Only the Parent</h1>
+<p>Nested tags look tidy: <code>#status/active</code>, <code>#status/parked</code>, <code>#status/done</code>. Then you search and the results are wrong. <code>tag:#status</code> returns every project, including the finished ones. Excluding one sub-tag makes notes vanish that you expected to see. Searching for <code>#work</code> misses <code>#myjob/work</code>. None of this is a bug. Obsidian's Search treats nested tags in a specific way, and once you know the rules, each of these takes one line to fix. This checklist uses core Search only, no community plugins.</p>
+<h2>Quick reference</h2>
+<table>
+<thead>
+<tr>
+<th>What you want</th>
+<th>Search term</th>
+<th>Check</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>A tag and all its sub-tags</td>
+<td><code>tag:#status</code></td>
+<td>1</td>
+</tr>
+<tr>
+<td>One sub-tag only</td>
+<td><code>tag:#status/active</code></td>
+<td>1</td>
+</tr>
+<tr>
+<td>A parent tag but not one sub-tag</td>
+<td><code>tag:#status -tag:#status/done</code> (whole notes are dropped)</td>
+<td>2</td>
+</tr>
+<tr>
+<td>Only the parent, none of its children</td>
+<td><code>/#status(?![\w/-])/</code></td>
+<td>3</td>
+</tr>
+<tr>
+<td>A last segment under any parent</td>
+<td><code>/#\S+\/work(?!\S)/</code></td>
+<td>4</td>
+</tr>
+<tr>
+<td>Tags written in properties</td>
+<td><code>tag:</code> covers them; plain-text regex doesn't</td>
+<td>5</td>
+</tr>
+<tr>
+<td>A list that stays up to date in a note</td>
+<td>a <code>query</code> code block</td>
+<td>6</td>
+</tr>
+</tbody>
+</table>
+<h2>☐ 1. Know what <code>tag:</code> matches</h2>
+<p>Obsidian's help on tags: "In Search, <code>tag:inbox</code> will match <code>#inbox</code> as well as all nested tags such as <code>#inbox/to-read</code>."</p>
+<ul>
+<li><code>tag:#status</code> returns notes with <code>#status</code>, <code>#status/active</code>, <code>#status/done</code> and any deeper level.</li>
+<li><code>tag:#status/active</code> returns that branch and its own children, such as <code>#status/active/blocked</code>, but not <code>#status/done</code>.</li>
+<li>Matching works from the start of the tag. The Search help says: "searching for <code>tag:#work</code> will not return results for <code>#myjob/work</code>."</li>
+<li>Tags are case-insensitive, so <code>#Status</code> and <code>#status</code> are the same tag.</li>
+<li>The <strong>Tags</strong> view (command palette: <strong>Tags: Show tags</strong>) lists nested tags under their parent (switch <strong>Show nested tags</strong> on for the tree), and clicking a tag searches for it. It's a quick way to see which levels exist.</li>
+</ul>
+<p>The Search help also notes that <code>tag:</code> "ignores matches in code blocks and in non-Markdown content", so it's more accurate than typing <code>#status</code> as plain text.</p>
+<h2>☐ 2. Excluding a sub-tag removes the whole note</h2>
+<p>Search terms can be negated with a hyphen, so <code>tag:#status -tag:#status/done</code> reads as "has a status tag, and isn't done". That works, as long as you remember that <code>tag:</code> looks at the whole note, not at a line.</p>
+<ul>
+<li>A note with <code>#status/active</code> in one section and <code>#status/done</code> in another is dropped entirely, because it contains the excluded tag somewhere.</li>
+<li>Note: this isn't spelled out in the help. A forum moderator answering a bug report put it as "Tag is note level operator not a line level. The result is correct."</li>
+<li>Operators go outside <code>tag:</code>, not inside it. Write <code>-tag:#status/done</code>, not <code>tag:(#status -#status/done)</code>.</li>
+<li>If you need results per line or per section, the help lists <code>line:</code> ("files that contain at least one line matching") and <code>section:</code> ("matches in the same section"). Note: these match text, not tags, so <code>#status/active</code> typed inside them also matches <code>#status/active/blocked</code>.</li>
+</ul>
+<p>If a note can legitimately carry both an "active" and a "done" status, that's usually a sign the tag should move to one place, such as the note's properties, so each note has exactly one status.</p>
+<h2>☐ 3. Match only the parent, not its children</h2>
+<p>There's no built-in "this tag but none of its sub-tags" option, and regular expressions can't go inside <code>tag:</code>. A plain-text regular expression works instead. The Search help: "To use regular expressions in your search term, surround the expression with forward slashes", and Obsidian uses JavaScript-flavoured regular expressions.</p>
+<pre><code>/#status(?![\w/-])/
+</code></pre>
+<ul>
+<li><code>#status</code> must be followed by something that can't continue a tag, so <code>#status/active</code> and <code>#statuses</code> don't match.</li>
+<li>A forum-suggested variant ends in <code>(?!\S)</code> ("not followed by a non-space character"). It's stricter: it also skips <code>#status,</code> or <code>#status.</code> when the tag is followed by punctuation.</li>
+<li>For a deeper tag, escape each slash: <code>/#status\/active(?![\w/-])/</code>.</li>
+<li>Search is case-insensitive by default, so this also matches <code>#Status</code>.</li>
+</ul>
+<p>Note: <code>\w</code> covers only A–Z, a–z, 0–9 and underscore. If your tags use accented letters or other scripts, a tag like <code>#statusé</code> would match too. Check with <strong>Explain search term</strong> in the search settings.</p>
+<p>This is a full-text search, so unlike <code>tag:</code> it also matches text inside code blocks.</p>
+<h2>☐ 4. Find a last segment under any parent</h2>
+<p><code>tag:#work</code> won't find <code>#myjob/work</code>. To find a segment wherever it sits in the hierarchy:</p>
+<pre><code>/#\S+\/work(?!\S)/
+</code></pre>
+<ul>
+<li>This matches <code>#myjob/work</code> and <code>#a/b/work</code>, but not <code>#myjob/work/today</code> or <code>#myjob/workshop</code>.</li>
+<li>A shorter idea from the forum is searching for the text <code>"/work"</code> in quotes. It's quick, but it also matches any other <code>/work</code> in your notes, such as file paths and URLs.</li>
+</ul>
+<p>Note: like check 3, this reads note text, so tags that only appear in properties aren't found this way (see check 5).</p>
+<h2>☐ 5. Tags in properties</h2>
+<p>Obsidian's help: you can add tags with the <code>tags</code> property, and "Tags in YAML should always be formatted as a list".</p>
+<pre><code class="language-yaml">---
+tags:
+  - project
+  - status/active
+---
+</code></pre>
+<ul>
+<li>In properties, tags are written without <code>#</code>. <code>tag:#status/active</code> finds them, but the plain-text regexes in checks 3 and 4 look for <code>#</code> and won't.</li>
+<li>To search the property directly, use property search: <code>[tags:status/active]</code>. The help says property values accept "parentheses for grouping, the <code>OR</code> operator, double-quotes for exact matching, and regex".</li>
+<li>Note: whether <code>[tags:status]</code> also returns the nested values isn't documented. Try it on a few notes before relying on it.</li>
+</ul>
+<p>If you mix body tags and property tags, <code>tag:</code> is the one operator that covers both.</p>
+<h2>☐ 6. Save the search as a live list in a note</h2>
+<p>The Search help: "To embed search results in a note, add a <code>query</code> code block". This works well for a dashboard note:</p>
+<pre><code>```query
+tag:#status/active -tag:#status/done
+```
+</code></pre>
+<ul>
+<li>The block updates whenever the matching notes change. There's no list to maintain.</li>
+<li>Note: Obsidian Publish doesn't render embedded search results (the help says so), so this is for your own vault, not a published site.</li>
+<li>If you use Bases, the help notes that <code>file.hasTag("a")</code> "will match both <code>#a</code> and <code>#a/b</code>", the same parent-matches-children rule as Search.</li>
+</ul>
+<h2>☐ 7. Colour the graph by tag</h2>
+<p>Graph view groups use the same search terms. In the graph settings, under <strong>Groups</strong>, click <strong>New group</strong>, type a search term such as <code>tag:#status/active</code>, and pick a colour.</p>
+<ul>
+<li>A group for <code>tag:#status</code> colours every note with any status sub-tag. Use the full sub-tag if you want active and done in different colours.</li>
+<li>Note: the help doesn't say which colour wins when a note matches more than one group. If a note shows the "wrong" colour, make the search terms mutually exclusive, for example <code>tag:#project -tag:#status/done</code> and <code>tag:#status/done</code>.</li>
+<li>If all group colours disappear after an update, the reporter in one forum thread fixed it with <strong>Restore default settings</strong> in the graph settings. That also deletes your groups, so copy <code>.obsidian/graph.json</code> first. That's where the graph settings, including the colour groups, are stored.</li>
+</ul>
+<h2>Symptom table</h2>
+<table>
+<thead>
+<tr>
+<th>Symptom</th>
+<th>Likely cause</th>
+<th>Check</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>tag:#status</code> returns finished projects</td>
+<td>Parent matches all sub-tags</td>
+<td>1, 3</td>
+</tr>
+<tr>
+<td><code>#work</code> search misses <code>#myjob/work</code></td>
+<td><code>tag:</code> matches from the start of the tag</td>
+<td>4</td>
+</tr>
+<tr>
+<td>Notes disappear after <code>-tag:#x/y</code></td>
+<td>Exclusion is note-level</td>
+<td>2</td>
+</tr>
+<tr>
+<td>Regex typed inside <code>tag:</code> gives an error or no results</td>
+<td>Regex isn't supported inside <code>tag:</code></td>
+<td>3</td>
+</tr>
+<tr>
+<td>Regex finds nothing for some notes</td>
+<td>Tags live in properties, without <code>#</code></td>
+<td>5</td>
+</tr>
+<tr>
+<td>Graph colours gone after an update</td>
+<td>Graph settings issue; reset after backing up</td>
+<td>7</td>
+</tr>
+</tbody>
+</table>
+<h2>A vault with a tag convention already in place</h2>
+<p><a href="https://kendeepp.gumroad.com/l/huwkwx?utm_source=seo&amp;utm_campaign=nestedtags">Indie Weekly</a> ($39) is a ready-to-open Obsidian vault for indie developers. According to its product page, it has 41 Markdown notes, including a Home dashboard, a getting-started guide, a tag convention note and filled examples, plus 8 templates: weekly review with a next-week plan, ship log, daily log, metrics snapshot, project, idea, decision and experiment. The tag convention uses one tag per note type (<code>#weekly</code>, <code>#ship</code>, <code>#project</code>, <code>#decision</code> and so on) and nested <code>#status/active</code>, <code>#status/parked</code> and <code>#status/done</code> tags for the project lifecycle, and the graph comes with colour groups for the main note types. It uses core Obsidian settings only, so no community plugins are needed. It's made for Obsidian desktop; mobile hasn't been tested yet.</p>
+<h2>Sources</h2>
+<ul>
+<li>Obsidian Help, Tags (nested tags, <code>tag:inbox</code> matches <code>#inbox/to-read</code>, case-insensitive, tags property as a list, Bases <code>hasTag</code>): https://help.obsidian.md/tags</li>
+<li>Obsidian Help, Search (<code>tag:</code> operator, <code>line:</code>/<code>section:</code>, negation, property search, regular expressions, embedded <code>query</code> blocks): https://help.obsidian.md/plugins/search</li>
+<li>Obsidian Help, Graph view (Groups): https://help.obsidian.md/plugins/graph</li>
+<li>Obsidian Help, Tags view: https://help.obsidian.md/plugins/tags</li>
+<li>Obsidian forum, How to search by part of nested tag: https://forum.obsidian.md/t/how-to-search-by-part-of-nested-tag/15074</li>
+<li>Obsidian forum, Convenient search for nested-tag: https://forum.obsidian.md/t/convenient-search-for-nested-tag/52135</li>
+<li>Obsidian forum, Exclude sub tags of nested tags from search: https://forum.obsidian.md/t/exclude-sub-tags-of-nested-tags-from-search/60985</li>
+<li>Obsidian forum, Excluding nested tags does not work in search: https://forum.obsidian.md/t/excluding-nested-tags-does-not-work-in-search/83432</li>
+<li>Obsidian forum, Search: Match tag but not its nested children: https://forum.obsidian.md/t/search-match-tag-but-not-its-nested-children/106544</li>
+<li>Obsidian forum, Graph view not showing group colors: https://forum.obsidian.md/t/graph-view-not-showing-group-colors/66201</li>
+</ul>
+</article>
+<footer><a href="/">Strataface</a> · <a href="/spreadsheet-guides/">Spreadsheet Guides</a> · <a href="/dev-notes/">Dev Notes</a> · <a href="/obsidian-guides/">Obsidian Guides</a> · <a href="/blender-bake-guides/">Blender Bake Guides</a></footer>
+</body>
+</html>

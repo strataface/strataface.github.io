@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Reading Tracker Spreadsheet: Count Books Finished per Month and Track a Yearly Goal</title>
+<meta name="description" content="Reading log formulas for Google Sheets and LibreOffice Calc: books finished per month and per year, progress toward a yearly reading goal, pages, ratings and days per book.">
+<link rel="canonical" href="https://strataface.github.io/spreadsheet-guides/reading-tracker-books-per-month-yearly-goal/">
+<style>
+body{font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;max-width:760px;margin:2.5rem auto;padding:0 1.25rem;line-height:1.65;color:#222}
+a{color:#1a5fb4}nav.crumbs{font-size:.9rem;color:#555;margin-bottom:1.5rem}h1{line-height:1.25}h2{margin-top:2.2rem}h3{margin-top:1.6rem}
+p.lead{color:#555;margin-top:0}li{margin:.3rem 0}
+pre{background:#f6f8fa;border:1px solid #e1e4e8;border-radius:6px;padding:.9rem 1rem;overflow-x:auto;font-size:.88rem;line-height:1.45}
+code{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;background:#f6f8fa;padding:.1em .3em;border-radius:4px;font-size:.92em}pre code{background:none;padding:0}
+table{border-collapse:collapse;width:100%;margin:1rem 0;font-size:.93rem;display:block;overflow-x:auto}th,td{border:1px solid #d0d7de;padding:.45rem .6rem;text-align:left;vertical-align:top}th{background:#f6f8fa}
+footer{margin-top:3rem;padding-top:1rem;border-top:1px solid #e1e4e8;font-size:.9rem;color:#555}
+</style>
+</head>
+<body>
+<nav class="crumbs"><a href="/">Strataface</a> › <a href="/spreadsheet-guides/">Spreadsheet Guides</a> › Reading Tracker Spreadsheet: Count Books Finished per Month and Track a Yearly Goal</nav>
+<article>
+<h1>Reading Tracker Spreadsheet: Count Books Finished per Month and Track a Yearly Goal</h1>
+<p>A reading log is easy to start: one row per book, with a status and a couple of dates. The summary is where it goes wrong. December shows fifteen books you never read, last year's books count toward this year's goal, or the genre table adds up to more than the total. Each of those has a specific cause, and each has a formula that avoids it.</p>
+<p>The formulas below use COUNTIFS, SUMIFS and AVERAGEIFS with date ranges, so they run the same way in Google Sheets, LibreOffice Calc and Excel.</p>
+<h2>The layout these formulas assume</h2>
+<p>A <strong>Books</strong> sheet, one row per book, headers in row 1:</p>
+<table>
+<thead>
+<tr>
+<th>Column</th>
+<th>Holds</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>C</td>
+<td>Genre</td>
+</tr>
+<tr>
+<td>D</td>
+<td>Status (To read, Reading, Finished, Abandoned)</td>
+</tr>
+<tr>
+<td>E</td>
+<td>Started (a real date)</td>
+</tr>
+<tr>
+<td>F</td>
+<td>Finished (a real date)</td>
+</tr>
+<tr>
+<td>G</td>
+<td>Pages</td>
+</tr>
+<tr>
+<td>H</td>
+<td>Rating, 1 to 5</td>
+</tr>
+<tr>
+<td>I</td>
+<td>Days to read (formula)</td>
+</tr>
+</tbody>
+</table>
+<p>A <strong>Summary</strong> sheet with the year in B1 and your yearly goal in B2.</p>
+<h2>Checklist</h2>
+<p>☐ 1. <strong>Count by the finish date and the status together.</strong> A book counts toward a year when it is Finished and its finish date falls in that year:</p>
+<pre><code>=COUNTIFS(Books!$D$2:$D$500, &quot;Finished&quot;,
+          Books!$F$2:$F$500, &quot;&gt;=&quot;&amp;DATE($B$1, 1, 1),
+          Books!$F$2:$F$500, &quot;&lt;&quot;&amp;DATE($B$1+1, 1, 1))
+</code></pre>
+<p>Filtering on status keeps Abandoned books out even when you typed an end date for them. Using "before 1 January of next year" rather than "on or before 31 December" also catches a finish date that carries a time of day.</p>
+<p>☐ 2. <strong>Count per month with a start and an end, not with MONTH().</strong> With the month number (1 to 12) in A5:A16:</p>
+<pre><code>=COUNTIFS(Books!$D$2:$D$500, &quot;Finished&quot;,
+          Books!$F$2:$F$500, &quot;&gt;=&quot;&amp;DATE($B$1, A5, 1),
+          Books!$F$2:$F$500, &quot;&lt;&quot;&amp;DATE($B$1, A5+1, 1))
+</code></pre>
+<p>For December, <code>DATE(year, 13, 1)</code> rolls over to 1 January of the next year. Google's DATE help documents this: month 13 becomes January of the following year. So one formula fills all twelve rows.</p>
+<p>Why not <code>SUMPRODUCT(--(MONTH(F2:F500)=12))</code>? Two reasons. It mixes years, so a book finished in January last year lands in this January. And an empty cell is treated as date zero, which some apps read as 30 December 1899, so every blank row in your range counts as a December book. That is the "fifteen books in December" bug.</p>
+<p>☐ 3. <strong>Use the same pattern for pages.</strong> Swap COUNTIFS for SUMIFS and add the pages column first:</p>
+<pre><code>=SUMIFS(Books!$G$2:$G$500, Books!$D$2:$D$500, &quot;Finished&quot;,
+        Books!$F$2:$F$500, &quot;&gt;=&quot;&amp;DATE($B$1, A5, 1),
+        Books!$F$2:$F$500, &quot;&lt;&quot;&amp;DATE($B$1, A5+1, 1))
+</code></pre>
+<p>Check: the twelve monthly counts should add up to the yearly count from step 1. If they don't, a finish date is probably text instead of a date.</p>
+<p>☐ 4. <strong>Show goal progress capped at 100%.</strong> With the yearly count in B3:</p>
+<pre><code>=IFERROR(MIN(1, B3/B2), 0)
+</code></pre>
+<p>Format it as a percentage. IFERROR covers a blank or zero goal, and MIN stops a bar chart from overflowing when you beat your goal.</p>
+<p>☐ 5. <strong>Add a pace check if you want "am I on track?"</strong> The number of books you'd have finished by now at an even pace:</p>
+<pre><code>=ROUND($B$2 * (TODAY() - DATE($B$1, 1, 1) + 1) / (DATE($B$1+1, 1, 1) - DATE($B$1, 1, 1)), 1)
+</code></pre>
+<p>For a goal of 24, this gives 12.0 on 1 July of a non-leap year. Compare it with your count. The denominator gives 365 or 366, so leap years work. Note: this only makes sense for the current year; for a past year, compare against the full goal instead.</p>
+<p>☐ 6. <strong>Calculate days to read per book, counting both ends.</strong> In I2, filled down:</p>
+<pre><code>=IF(AND(ISNUMBER(E2), ISNUMBER(F2)), F2-E2+1, &quot;&quot;)
+</code></pre>
+<p>The <code>+1</code> makes a book started and finished on the same day count as 1 day. The ISNUMBER checks leave the cell blank for books still being read, instead of showing a huge negative number.</p>
+<p>☐ 7. <strong>Average rating and days with the same filters.</strong></p>
+<pre><code>=IFERROR(AVERAGEIFS(Books!$H$2:$H$500, Books!$D$2:$D$500, &quot;Finished&quot;,
+         Books!$F$2:$F$500, &quot;&gt;=&quot;&amp;DATE($B$1, 1, 1),
+         Books!$F$2:$F$500, &quot;&lt;&quot;&amp;DATE($B$1+1, 1, 1)), &quot;&quot;)
+</code></pre>
+<p>Use column I instead of H for average days per book. IFERROR shows a blank early in the year, when no book matches yet (AVERAGEIFS returns <code>#DIV/0!</code> when nothing meets the criteria). Note: unrated books are normally left out of the average rather than counted as 0, but if a rating cell holds a space or text, check the result against a manual count.</p>
+<p>☐ 8. <strong>Make the genre table add up to the total.</strong> Count each named genre with one more COUNTIFS pair (<code>Books!$C$2:$C$500, A30</code>), then make the last row the difference:</p>
+<pre><code>=B3 - SUM(B30:B34)
+</code></pre>
+<p>Label it "Everything else". It catches books with a genre you didn't list and books with a blank genre, so the table always matches the yearly count.</p>
+<p>☐ 9. <strong>Keep dates as real dates.</strong> Every formula above compares dates as numbers. A date typed in a format your spreadsheet's locale doesn't recognise is stored as text and silently drops out. <code>=ISNUMBER(F2)</code> should be TRUE for every finished book. A date-only validation rule on the date columns prevents most of this.</p>
+<h2>Quick diagnosis</h2>
+<table>
+<thead>
+<tr>
+<th>Symptom</th>
+<th>Likely cause</th>
+<th>Step</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>December (or January) far too high</td>
+<td>MONTH() over blank rows</td>
+<td>2</td>
+</tr>
+<tr>
+<td>Last year's books in this year's total</td>
+<td>No year bounds, or MONTH() alone</td>
+<td>1, 2</td>
+</tr>
+<tr>
+<td>Months don't add up to the year</td>
+<td>A finish date stored as text</td>
+<td>3, 9</td>
+</tr>
+<tr>
+<td>Genre rows exceed the total</td>
+<td>Overlapping labels, or no "everything else" row</td>
+<td>8</td>
+</tr>
+<tr>
+<td><code>#DIV/0!</code> in averages</td>
+<td>No finished books yet this year</td>
+<td>7</td>
+</tr>
+</tbody>
+</table>
+<h2>A ready-made version</h2>
+<p>If you'd rather not build the dashboard, the <a href="https://kendeepp.gumroad.com/l/mouelm?utm_source=seo&amp;utm_campaign=readgoal">Reading &amp; Habit Tracker</a> ($5) is one .xlsx file for Google Sheets and LibreOffice Calc. According to its product page, the Books log has title, author, genre and status dropdowns, dates, pages and a 1-5 rating, with days-to-read calculated. The dashboard, for the year you choose, shows books finished against your goal with a progress chart, pages read, average rating, average days per book, books and pages per month, and finished books by genre (7 named genres plus "everything else", always adding up to the total). It also has a monthly habit grid. Its listed limits: formulas tested in LibreOffice Calc, an earlier version import-tested in Google Sheets, not tested in Microsoft Excel; and it was built with AI assistance.</p>
+<h2>Sources</h2>
+<ul>
+<li>Google Docs Editors Help, DATE (month 13 rolls over to January of the next year): https://support.google.com/docs/answer/3092969?hl=en</li>
+<li>Google Docs Editors Help, COUNTIFS (date criteria written as "&lt;"&amp;DATE(...)): https://support.google.com/docs/answer/3256550?hl=en</li>
+<li>Google Docs Editors Help, AVERAGEIFS: https://support.google.com/docs/answer/3256534?hl=en</li>
+<li>Microsoft Support, AVERAGEIFS function (<code>#DIV/0!</code> when no cells meet the criteria): https://support.microsoft.com/en-us/office/averageifs-function-48910c45-1fc0-4389-a028-f7c5c3001690</li>
+</ul>
+<p>Questions this page answers:</p>
+<ul>
+<li>Count the dates and display a total per month: https://stackoverflow.com/questions/73561364/i-need-a-google-sheets-formula-that-will-count-the-dates-and-display-total-per-m</li>
+<li>Counting categories in a specific month: https://stackoverflow.com/questions/69454316/counting-categories-in-a-specific-month</li>
+<li>Count rows with a specific month and a condition in another cell: https://webapps.stackexchange.com/questions/150041/count-number-of-rows-with-a-specific-month-in-the-date-of-a-specific-cell-and-a</li>
+<li>Select all values of a specific month: https://webapps.stackexchange.com/questions/129976/query-select-all-values-of-specific-month</li>
+</ul>
+</article>
+<footer><a href="/">Strataface</a> · <a href="/spreadsheet-guides/">Spreadsheet Guides</a> · <a href="/dev-notes/">Dev Notes</a> · <a href="/obsidian-guides/">Obsidian Guides</a> · <a href="/blender-bake-guides/">Blender Bake Guides</a></footer>
+</body>
+</html>

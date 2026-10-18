@@ -1,0 +1,299 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Laravel Cashier invoices() Empty or Missing Invoices? A Checklist for Livewire Billing Pages</title>
+<meta name="description" content="Why Laravel Cashier invoices() returns nothing or skips unpaid invoices, why Cashier Invoice objects break Livewire properties, and how to map amounts, statuses and downloads for a billing page.">
+<link rel="canonical" href="https://strataface.github.io/dev-notes/laravel-cashier-invoices-empty-missing-livewire/">
+<style>
+body{font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;max-width:760px;margin:2.5rem auto;padding:0 1.25rem;line-height:1.65;color:#222}
+a{color:#1a5fb4}nav.crumbs{font-size:.9rem;color:#555;margin-bottom:1.5rem}h1{line-height:1.25}h2{margin-top:2.2rem}h3{margin-top:1.6rem}
+p.lead{color:#555;margin-top:0}li{margin:.3rem 0}
+pre{background:#f6f8fa;border:1px solid #e1e4e8;border-radius:6px;padding:.9rem 1rem;overflow-x:auto;font-size:.88rem;line-height:1.45}
+code{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;background:#f6f8fa;padding:.1em .3em;border-radius:4px;font-size:.92em}pre code{background:none;padding:0}
+table{border-collapse:collapse;width:100%;margin:1rem 0;font-size:.93rem;display:block;overflow-x:auto}th,td{border:1px solid #d0d7de;padding:.45rem .6rem;text-align:left;vertical-align:top}th{background:#f6f8fa}
+footer{margin-top:3rem;padding-top:1rem;border-top:1px solid #e1e4e8;font-size:.9rem;color:#555}
+</style>
+</head>
+<body>
+<nav class="crumbs"><a href="/">Strataface</a> › <a href="/dev-notes/">Dev Notes</a> › Laravel Cashier invoices() Empty or Missing Invoices? A Checklist for Livewire Billing Pages</nav>
+<article>
+<h1>Laravel Cashier invoices() Empty or Missing Invoices? A Checklist for Livewire Billing Pages</h1>
+<p>You're building the "Billing" page of a Laravel app. Stripe's dashboard shows the customer's invoices, but <code>$user-&gt;invoices()</code> comes back empty, or the unpaid invoice the customer is asking about isn't in the list. Or the list loads in a controller and then throws an error the moment you move it into a Livewire component. This checklist goes through the causes in the order that's quickest to rule out, then ends with a small component that maps Cashier invoices into rows a Livewire table can hold.</p>
+<p>It's written against Laravel Cashier (Stripe) v16.9.0 and Livewire 3 and 4. Where older Cashier versions behave differently, that's noted.</p>
+<h2>Quick reference</h2>
+<table>
+<thead>
+<tr>
+<th>What you see</th>
+<th>Most likely cause</th>
+<th>Check</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Empty collection, no error</td>
+<td>The model has no Stripe customer id, or it's the wrong model</td>
+<td>1</td>
+</tr>
+<tr>
+<td>Open, draft or failed-payment invoices missing</td>
+<td><code>invoices()</code> only returns paid invoices</td>
+<td>2</td>
+</tr>
+<tr>
+<td>Only recent invoices, or fewer than expected</td>
+<td>The default limit of 24, applied before the paid filter</td>
+<td>3</td>
+</tr>
+<tr>
+<td>"Property type not supported in Livewire for property"</td>
+<td>Cashier <code>Invoice</code> objects in a public property</td>
+<td>4</td>
+</tr>
+<tr>
+<td>Amounts 100× too big, or text where you expected a number</td>
+<td>Raw minor units vs formatted strings</td>
+<td>5</td>
+</tr>
+<tr>
+<td>Badge says "open" or "uncollectible", or there's no "overdue"</td>
+<td>Stripe statuses aren't portal statuses</td>
+<td>6</td>
+</tr>
+<tr>
+<td>Customer paid, list still says unpaid</td>
+<td>Stale data</td>
+<td>7</td>
+</tr>
+<tr>
+<td>Download returns 403 or 404</td>
+<td>The invoice belongs to another customer, or the id is wrong</td>
+<td>8</td>
+</tr>
+</tbody>
+</table>
+<h2>☐ 1. The model actually has a Stripe customer id</h2>
+<p>In Cashier v16 (and v14 and v15), <code>invoices()</code> starts with this check:</p>
+<pre><code class="language-php">if (! $this-&gt;hasStripeId()) {
+    return new Collection();
+}
+</code></pre>
+<p>So a user without <code>stripe_id</code> gets an empty collection. There's no exception and nothing in the log. Check two things:</p>
+<ul>
+<li><strong>The column is filled</strong> for the user you're testing with. A customer created in the Stripe dashboard isn't linked to your user until you store its id, for example with <code>createAsStripeCustomer()</code> or <code>createOrGetStripeCustomer()</code>.</li>
+<li><strong>You're calling it on the Billable model.</strong> If the <code>Billable</code> trait is on a <code>Team</code> or <code>Membership</code> model, <code>auth()-&gt;user()-&gt;invoices()</code> is the wrong object. One of the oldest questions about this, <a href="https://stackoverflow.com/questions/22423144">Laravel/Cashier invoices() returns empty Object</a>, had the Cashier columns on a separate membership table.</li>
+</ul>
+<p>Also make sure your app's Stripe keys are for the same mode (test or live) as the invoices you're looking at in the dashboard.</p>
+<h2>☐ 2. invoices() only returns paid invoices</h2>
+<p>This is the most common surprise. Cashier fetches the customer's invoices from Stripe and then keeps only the paid ones unless you ask for more:</p>
+<pre><code class="language-php">foreach ($stripeInvoices-&gt;data as $invoice) {
+    $invoiceInstance = new Invoice($this, $invoice);
+
+    if ($invoiceInstance-&gt;isPaid() || $includePending) {
+        $invoices[] = $invoiceInstance;
+    }
+}
+</code></pre>
+<p>That simplified excerpt is from v16.9.0, where <code>isPaid()</code> means <code>status === 'paid'</code>. So an invoice that is open (awaiting payment or after a failed charge), draft, uncollectible or void is dropped. For a customer billing page you almost always want all of them:</p>
+<pre><code class="language-php">$invoices = $user-&gt;invoicesIncludingPending();
+// same as $user-&gt;invoices(true)
+</code></pre>
+<p>Note: Cashier v14 and v15 checked Stripe's <code>paid</code> field instead of <code>status</code> (<code>$invoice-&gt;paid || $includePending</code>), with the Stripe API version pinned by Cashier (2022-11-15 in v14.14.0, 2023-10-16 in v15.8.0). Stripe removed <code>Invoice.paid</code> in API version 2025-03-31.basil, and Cashier v16 uses the current API version. If you copy filtering code from an older answer that reads <code>$invoice-&gt;paid</code>, check it against your Cashier and Stripe API versions.</p>
+<h2>☐ 3. The default limit is 24, and it's applied before the paid filter</h2>
+<p>Cashier sends <code>limit: 24</code> to Stripe unless you pass your own. With the default <code>invoices()</code>, the paid filter runs on those 24, so a customer with many failed or open invoices can see fewer than 24 rows even when they have older paid invoices.</p>
+<p>Pass Stripe list parameters as the second argument:</p>
+<pre><code class="language-php">// up to 100, which is Stripe's maximum page size
+$invoices = $user-&gt;invoices(true, ['limit' =&gt; 100]);
+
+// only open invoices, filtered by Stripe
+$open = $user-&gt;invoices(true, ['status' =&gt; 'open']);
+</code></pre>
+<p>For a long history, <code>cursorPaginateInvoices($perPage)</code> returns a Laravel cursor paginator over the same data (it always includes pending invoices).</p>
+<p>If you need invoices for all customers (an admin revenue report, as in <a href="https://stackoverflow.com/questions/44103634">Laravel cashier list all invoices and total</a>), looping over users and calling <code>invoices()</code> is one API call per user. That's a different job: list invoices from Stripe directly or store them locally from webhooks.</p>
+<h2>☐ 4. Don't put Cashier Invoice objects in a Livewire public property</h2>
+<p>This one only appears when the code moves into Livewire:</p>
+<pre><code class="language-php">public $invoices;
+
+public function mount()
+{
+    $this-&gt;invoices = auth()-&gt;user()-&gt;invoicesIncludingPending(); // breaks
+}
+</code></pre>
+<p>Livewire sends every public property to the browser and back on each request, so it supports a fixed set of types: arrays, strings, integers, floats, booleans and null, plus <code>BackedEnum</code>, <code>Collection</code>, Eloquent collections and models, <code>DateTime</code>, <code>Carbon</code> and <code>Stringable</code>. Anything else needs a <code>Wireable</code> implementation or a custom Synthesizer. The 3.x and 4.x docs list the same types.</p>
+<p><code>Laravel\Cashier\Invoice</code> is none of those. Wrapping it in a Collection doesn't help, because Livewire's Collection support dehydrates each item, and each item is still an <code>Invoice</code>. The error you get is "Property type not supported in Livewire for property: [...]". The bracket may hold a large JSON dump, because the <code>Invoice</code> serialises to the full Stripe invoice.</p>
+<p>You have three ways out:</p>
+<ul>
+<li><strong>A computed property</strong> (<code>#[Computed]</code>). It's evaluated on the server for each request and is not stored in the component state. This is the simplest option, and it's the one used in the example below.</li>
+<li><strong>Pass the data to the view from <code>render()</code></strong>, which also stays on the server.</li>
+<li><strong>Store plain arrays</strong>, not objects, if you really need a public property. Pick the fields you show. Don't use <code>$invoice-&gt;toArray()</code>: in Cashier it returns the whole Stripe invoice (customer email, address, line items and more), which would all end up in the page.</li>
+</ul>
+<h2>☐ 5. Pick one money unit and stick to it</h2>
+<p>Cashier gives you two kinds of amount methods on an invoice:</p>
+<table>
+<thead>
+<tr>
+<th>Method</th>
+<th>Returns</th>
+<th>Example for $12.50</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>total()</code>, <code>amountDue()</code>, <code>subtotal()</code></td>
+<td>Formatted string, using the invoice's currency and <code>cashier.currency_locale</code></td>
+<td><code>"$12.50"</code></td>
+</tr>
+<tr>
+<td><code>rawTotal()</code>, <code>rawAmountDue()</code></td>
+<td>Integer in the currency's smallest unit</td>
+<td><code>1250</code></td>
+</tr>
+</tbody>
+</table>
+<p>Typical bugs are showing <code>rawTotal()</code> as dollars (100× too big), formatting an already formatted string, or summing strings. A safe rule is to keep the integer for sorting and sums and format it once, at display time.</p>
+<p>For two-decimal currencies like USD or EUR, the smallest unit is a cent. Stripe also has zero-decimal currencies (JPY is one), where the integer <em>is</em> the amount, so don't hard-code <code>/ 100</code> for every currency. See Stripe's <a href="https://docs.stripe.com/currencies#zero-decimal">zero-decimal currency list</a>. Cashier's own formatter already handles this, so <code>total()</code> is the safest string for display.</p>
+<p><code>total()</code> and <code>rawTotal()</code> subtract the customer's starting balance (credit). <code>rawRealTotal()</code> is Stripe's <code>total</code> field as is. Pick the one that matches what the customer should see, and use it everywhere on the page.</p>
+<h2>☐ 6. Map Stripe's statuses to the ones your page shows</h2>
+<p>A Stripe invoice is always one of five statuses: <code>draft</code>, <code>open</code>, <code>paid</code>, <code>uncollectible</code> or <code>void</code>. There's no "overdue" and no "sent". Cashier has a helper for each one: <code>isDraft()</code>, <code>isOpen()</code>, <code>isPaid()</code>, <code>isUncollectible()</code> and <code>isVoid()</code>.</p>
+<p>Most portals show something friendlier. One mapping that's easy to explain:</p>
+<table>
+<thead>
+<tr>
+<th>Stripe status</th>
+<th>Shown to the customer as</th>
+<th>Notes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>draft</code></td>
+<td>Hidden, or "Draft"</td>
+<td>Not finalised yet; <code>number</code> can still be null</td>
+</tr>
+<tr>
+<td><code>open</code> with a due date in the past</td>
+<td>"Overdue"</td>
+<td>Your own rule, not a Stripe status</td>
+</tr>
+<tr>
+<td><code>open</code></td>
+<td>"Due" / "Unpaid"</td>
+<td>Includes invoices whose automatic charge failed</td>
+</tr>
+<tr>
+<td><code>paid</code></td>
+<td>"Paid"</td>
+<td></td>
+</tr>
+<tr>
+<td><code>uncollectible</code></td>
+<td>"Unpaid" or "Contact us"</td>
+<td>Stripe can still move it to <code>paid</code> later</td>
+</tr>
+<tr>
+<td><code>void</code></td>
+<td>"Void", or hidden</td>
+<td></td>
+</tr>
+</tbody>
+</table>
+<p>The due date catch: Stripe sets <code>due_date</code> only for invoices sent for manual payment (<code>collection_method=send_invoice</code>). For automatically charged invoices, the usual case with Cashier subscriptions, <code>due_date</code> is null, so <code>dueDate()</code> returns null and an "overdue" rule based on it never fires. For those, an <code>open</code> status already means the charge hasn't succeeded yet.</p>
+<p>Stripe also notes that a new invoice isn't attempted until about an hour after the <code>invoice.created</code> webhook, so you may not want to show a fresh open invoice as "unpaid" straight away.</p>
+<h2>☐ 7. The list is stale after the customer pays</h2>
+<p><code>invoices()</code> asks Stripe each time it runs, so a page reload shows the new status. The problem is a Livewire component that fetched once in <code>mount()</code> and kept the result in state, or a local <code>invoices</code> table you never update.</p>
+<ul>
+<li>With a computed property, the next request re-runs it. Add a refresh button that calls an empty action, or <code>unset($this-&gt;invoices)</code> to clear the cached value within a request.</li>
+<li>If you store invoices locally, update them from Stripe's webhooks (<code>invoice.paid</code>, <code>invoice.payment_failed</code>, <code>invoice.voided</code>, <code>invoice.marked_uncollectible</code>). Cashier fires a <code>WebhookReceived</code> event for every webhook it receives, which you can listen to.</li>
+</ul>
+<h2>☐ 8. Downloads: always look the invoice up through the signed-in user</h2>
+<p>Cashier's PDF download is a single call. It needs the Dompdf library installed (<code>composer require dompdf/dompdf</code>):</p>
+<pre><code class="language-php">use Illuminate\Http\Request;
+
+Route::get('/billing/invoices/{invoiceId}', function (Request $request, string $invoiceId) {
+    return $request-&gt;user()-&gt;downloadInvoice($invoiceId);
+})-&gt;middleware('auth');
+</code></pre>
+<p>In v16.9.0, Cashier's <code>Invoice</code> constructor compares the model's <code>stripe_id</code> with the invoice's <code>customer</code> and throws <code>InvalidInvoice</code> if they differ. <code>findInvoiceOrFail()</code> and <code>downloadInvoice()</code> turn that into a 403, and an id Stripe can't find into a 404. Note that <code>findInvoice()</code> throws for another customer's invoice rather than returning null.</p>
+<p>That check protects you only if you call it on the right model. Call it on <code>$request-&gt;user()</code> (or the team the user is authorised for), never on a user or team id taken from the URL or a Livewire property. In a Livewire action that receives an invoice id, call it on <code>auth()-&gt;user()</code> the same way.</p>
+<h2>Putting it together: a minimal Livewire component</h2>
+<p>This component lists every invoice for the signed-in user. It keeps the data out of the component state and turns each Cashier <code>Invoice</code> into a plain array:</p>
+<pre><code class="language-php">&lt;?php
+
+namespace App\Livewire;
+
+use Livewire\Attributes\Computed;
+use Livewire\Component;
+
+class BillingInvoices extends Component
+{
+    #[Computed]
+    public function invoices(): array
+    {
+        return auth()-&gt;user()
+            -&gt;invoicesIncludingPending(['limit' =&gt; 100])
+            -&gt;map(fn ($invoice) =&gt; [
+                'id' =&gt; $invoice-&gt;id,
+                'number' =&gt; $invoice-&gt;number ?? '—',
+                'issued_at' =&gt; $invoice-&gt;date()-&gt;toDateString(),
+                'due_at' =&gt; $invoice-&gt;dueDate()?-&gt;toDateString(),
+                'total' =&gt; $invoice-&gt;total(),         // formatted for display
+                'total_minor' =&gt; $invoice-&gt;rawTotal(), // integer, for sums and sorting
+                'status' =&gt; $this-&gt;label($invoice),
+            ])
+            -&gt;all();
+    }
+
+    private function label($invoice): string
+    {
+        return match (true) {
+            $invoice-&gt;isPaid() =&gt; 'paid',
+            $invoice-&gt;isVoid() =&gt; 'void',
+            $invoice-&gt;isDraft() =&gt; 'draft',
+            $invoice-&gt;isUncollectible() =&gt; 'unpaid',
+            $invoice-&gt;dueDate()?-&gt;isPast() =&gt; 'overdue',
+            default =&gt; 'due',
+        };
+    }
+
+    public function render()
+    {
+        return view('livewire.billing-invoices');
+    }
+}
+</code></pre>
+<p>In the Blade view, read it as <code>$this-&gt;invoices</code> and give each row a <code>wire:key="invoice-{{ $row['id'] }}"</code>. The download link points at the route from check 8. If you add a search box or status filter on top of this list and it doesn't react, see <a href="https://strataface.github.io/dev-notes/livewire-search-filter-not-updating-table/">Livewire search or filter not updating the table</a>.</p>
+<p>Note: this is an example to adapt, not a drop-in file. It assumes <code>Billable</code> is on your <code>User</code> model and that one page of up to 100 invoices is enough. Use <code>cursorPaginateInvoices()</code> beyond that.</p>
+<h2>If you don't want to build the table and badge yourself</h2>
+<p>Once you have the mapped array, what's left is UI. <a href="https://kendeepp.gumroad.com/l/qrzrsa?utm_source=seo&amp;utm_campaign=cashierinvoices">Billstack</a> ($29) is a pack of Livewire components for billing portals.</p>
+<p>Its <code>CustomerInvoiceTable</code> takes an array of rows much like the one above (<code>id</code>, <code>number</code>, <code>issued_at</code>, <code>due_at</code>, <code>total</code>, <code>status</code> and an optional <code>currency</code>) and adds a live search box and status filter. Its <code>PaymentStatusBadge</code> covers draft, sent, paid, overdue and void.</p>
+<p>It does not connect to Stripe or Cashier, so you still do the fetching and mapping from this page. Three adjustments for its row shape:</p>
+<ul>
+<li><strong>Status:</strong> map <code>open</code> to <code>sent</code> or <code>overdue</code>, and pick one of its five statuses for <code>uncollectible</code>. Values it doesn't recognise are shown as Draft.</li>
+<li><strong>Total:</strong> pass a number in major units (12.50, not 1250 and not "$12.50").</li>
+<li><strong>Due date:</strong> a missing due date displays as a dash.</li>
+</ul>
+<p>It requires PHP ^8.2, Livewire 3 or 4 and Laravel 10+, and it isn't affiliated with Laravel or Livewire.</p>
+<h2>Sources</h2>
+<ul>
+<li>Laravel docs, Cashier (Stripe): retrieving invoices, generating invoice PDFs: https://laravel.com/docs/13.x/billing#retrieving-invoices</li>
+<li>Laravel Cashier (Stripe) v16.9.0, <code>ManagesInvoices</code> (<code>invoices()</code>, <code>findInvoice()</code>, <code>downloadInvoice()</code>): https://github.com/laravel/cashier-stripe/blob/v16.9.0/src/Concerns/ManagesInvoices.php</li>
+<li>Laravel Cashier (Stripe) v16.9.0, <code>Invoice</code> (owner check, amount and status helpers): https://github.com/laravel/cashier-stripe/blob/v16.9.0/src/Invoice.php</li>
+<li>Laravel Cashier (Stripe) v16.9.0, <code>WebhookController</code> (<code>WebhookReceived</code> event): https://github.com/laravel/cashier-stripe/blob/v16.9.0/src/Http/Controllers/WebhookController.php</li>
+<li>Laravel Cashier (Stripe) v15.8.0, <code>ManagesInvoices</code> (the older <code>paid</code> check): https://github.com/laravel/cashier-stripe/blob/v15.8.0/src/Concerns/ManagesInvoices.php</li>
+<li>Livewire docs, Properties (supported types, Wireables, computed properties): https://livewire.laravel.com/docs/4.x/properties and https://livewire.laravel.com/docs/3.x/properties</li>
+<li>Stripe API, The Invoice object (<code>status</code>, <code>due_date</code>, <code>attempted</code>, amounts): https://docs.stripe.com/api/invoices/object</li>
+<li>Stripe API, List all invoices (<code>limit</code>, <code>status</code>): https://docs.stripe.com/api/invoices/list</li>
+<li>Stripe changelog, Invoice <code>paid</code> removed in 2025-03-31.basil: https://docs.stripe.com/changelog/basil/2025-03-31/add-support-for-multiple-partial-payments-on-invoices</li>
+<li>Stripe docs, Invoice status transitions: https://docs.stripe.com/invoicing/integration/workflow-transitions</li>
+<li>Stripe docs, Supported currencies (zero-decimal): https://docs.stripe.com/currencies#zero-decimal</li>
+<li>Stack Overflow, Laravel/Cashier invoices() returns empty Object: https://stackoverflow.com/questions/22423144</li>
+<li>Stack Overflow, Getting all invoices with Laravel Cashier: https://stackoverflow.com/questions/28817523</li>
+<li>Stack Overflow, Laravel cashier list all invoices and total: https://stackoverflow.com/questions/44103634</li>
+<li>GitHub, laravel/cashier-stripe #938, invoices() returns no data: https://github.com/laravel/cashier-stripe/issues/938</li>
+</ul>
+</article>
+<footer><a href="/">Strataface</a> · <a href="/spreadsheet-guides/">Spreadsheet Guides</a> · <a href="/dev-notes/">Dev Notes</a> · <a href="/obsidian-guides/">Obsidian Guides</a> · <a href="/blender-bake-guides/">Blender Bake Guides</a></footer>
+</body>
+</html>

@@ -154,7 +154,7 @@ public function mount()
 </table>
 <p>Typical bugs are showing <code>rawTotal()</code> as dollars (100× too big), formatting an already formatted string, or summing strings. A safe rule is to keep the integer for sorting and sums and format it once, at display time.</p>
 <p>For two-decimal currencies like USD or EUR, the smallest unit is a cent. Stripe also has zero-decimal currencies (JPY is one), where the integer <em>is</em> the amount, so don't hard-code <code>/ 100</code> for every currency. See Stripe's <a href="https://docs.stripe.com/currencies#zero-decimal">zero-decimal currency list</a>. Cashier's own formatter already handles this, so <code>total()</code> is the safest string for display.</p>
-<p><code>total()</code> and <code>rawTotal()</code> subtract the customer's starting balance (credit). <code>rawRealTotal()</code> is Stripe's <code>total</code> field as is. Pick the one that matches what the customer should see, and use it everywhere on the page.</p>
+<p><code>total()</code> and <code>rawTotal()</code> add the invoice's <code>starting_balance</code> to Stripe's <code>total</code>. A customer credit is stored as a negative balance, so a credit lowers the figure. <code>rawRealTotal()</code> (formatted: <code>realTotal()</code>) is Stripe's <code>total</code> field as is. Pick the one that matches what the customer should see, and use it everywhere on the page.</p>
 <h2>☐ 6. Map Stripe's statuses to the ones your page shows</h2>
 <p>A Stripe invoice is always one of five statuses: <code>draft</code>, <code>open</code>, <code>paid</code>, <code>uncollectible</code> or <code>void</code>. There's no "overdue" and no "sent". Cashier has a helper for each one: <code>isDraft()</code>, <code>isOpen()</code>, <code>isPaid()</code>, <code>isUncollectible()</code> and <code>isVoid()</code>.</p>
 <p>Most portals show something friendlier. One mapping that's easy to explain:</p>
@@ -200,7 +200,7 @@ public function mount()
 </tbody>
 </table>
 <p>The due date catch: Stripe sets <code>due_date</code> only for invoices sent for manual payment (<code>collection_method=send_invoice</code>). For automatically charged invoices, the usual case with Cashier subscriptions, <code>due_date</code> is null, so <code>dueDate()</code> returns null and an "overdue" rule based on it never fires. For those, an <code>open</code> status already means the charge hasn't succeeded yet.</p>
-<p>Stripe also notes that a new invoice isn't attempted until about an hour after the <code>invoice.created</code> webhook, so you may not want to show a fresh open invoice as "unpaid" straight away.</p>
+<p>For automatically collected invoices, Stripe also waits about an hour after your webhook endpoints successfully respond to <code>invoice.created</code> before attempting payment, so you may not want to show a fresh open invoice as "unpaid" straight away.</p>
 <h2>☐ 7. The list is stale after the customer pays</h2>
 <p><code>invoices()</code> asks Stripe each time it runs, so a page reload shows the new status. The problem is a Livewire component that fetched once in <code>mount()</code> and kept the result in state, or a local <code>invoices</code> table you never update.</p>
 <ul>

@@ -270,7 +270,9 @@ async function attachUnlinked(user: { id: string; email: string; emailVerified: 
 <li>A customer-portal "Manage billing" link, and a Chrome extension (MV3) example that unlocks with the key.</li>
 <li>English, Chinese and Japanese UI.</li>
 </ul>
-<p>In its source, a webhook links to a user only when the <code>user_id</code> from custom data belongs to an existing user. The dashboard also shows subscriptions whose customer email matches the signed-in user's email, so a purchase made without the id can still appear for the same email. It costs $99 one-time (Personal) or $199 (Team).</p>
+<p>In its source, a webhook links to a user only when the <code>user_id</code> from custom data belongs to an existing user. The dashboard also shows subscriptions whose customer email matches the signed-in user's email, so a purchase made without the id can still appear for the same email.</p>
+<p>Note: Rindstack's dashboard trusts the email returned by the GitHub or Google sign-in and doesn't run its own verification check. Its user table has an <code>emailVerified</code> field, but none of the app's own code reads it. Its email-only demo login accepts any address without verification; it runs only when <code>AUTH_DEV_LOGIN</code> is <code>true</code>, and never when <code>NODE_ENV</code> is <code>production</code>. If you add other sign-in methods, check email verification before matching subscriptions by email.</p>
+<p>It costs $99 one-time (Personal) or $199 (Team).</p>
 <p>Its listed limits:</p>
 <ul>
 <li>No Stripe, teams, blog, transactional email or admin panel.</li>

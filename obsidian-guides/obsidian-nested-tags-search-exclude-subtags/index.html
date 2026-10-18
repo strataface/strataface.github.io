@@ -83,12 +83,12 @@ footer{margin-top:3rem;padding-top:1rem;border-top:1px solid #e1e4e8;font-size:.
 <ul>
 <li>A note with <code>#status/active</code> in one section and <code>#status/done</code> in another is dropped entirely, because it contains the excluded tag somewhere.</li>
 <li>Note: this isn't spelled out in the help. A forum moderator answering a bug report put it as "Tag is note level operator not a line level. The result is correct."</li>
-<li>Operators go outside <code>tag:</code>, not inside it. Write <code>-tag:#status/done</code>, not <code>tag:(#status -#status/done)</code>.</li>
+<li>Put the hyphen in front of the operator: <code>-tag:#status/done</code>.</li>
 <li>If you need results per line or per section, the help lists <code>line:</code> ("files that contain at least one line matching") and <code>section:</code> ("matches in the same section"). Note: these match text, not tags, so <code>#status/active</code> typed inside them also matches <code>#status/active/blocked</code>.</li>
 </ul>
 <p>If a note can legitimately carry both an "active" and a "done" status, that's usually a sign the tag should move to one place, such as the note's properties, so each note has exactly one status.</p>
 <h2>☐ 3. Match only the parent, not its children</h2>
-<p>There's no built-in "this tag but none of its sub-tags" option, and regular expressions can't go inside <code>tag:</code>. A plain-text regular expression works instead. The Search help: "To use regular expressions in your search term, surround the expression with forward slashes", and Obsidian uses JavaScript-flavoured regular expressions.</p>
+<p>There's no built-in "this tag but none of its sub-tags" option, and regular expressions can't go inside <code>tag:</code> (Obsidian answers "operator 'tag' can only be followed by text", as a forum moderator confirmed). A plain-text regular expression works instead. The Search help: "To use regular expressions in your search term, surround the expression with forward slashes", and Obsidian uses JavaScript-flavoured regular expressions.</p>
 <pre><code>/#status(?![\w/-])/
 </code></pre>
 <ul>
@@ -183,7 +183,7 @@ tag:#status/active -tag:#status/done
 </tbody>
 </table>
 <h2>A vault with a tag convention already in place</h2>
-<p><a href="https://kendeepp.gumroad.com/l/huwkwx?utm_source=seo&amp;utm_campaign=nestedtags">Indie Weekly</a> ($39) is a ready-to-open Obsidian vault for indie developers. According to its product page, it has 41 Markdown notes, including a Home dashboard, a getting-started guide, a tag convention note and filled examples, plus 8 templates: weekly review with a next-week plan, ship log, daily log, metrics snapshot, project, idea, decision and experiment. The tag convention uses one tag per note type (<code>#weekly</code>, <code>#ship</code>, <code>#project</code>, <code>#decision</code> and so on) and nested <code>#status/active</code>, <code>#status/parked</code> and <code>#status/done</code> tags for the project lifecycle, and the graph comes with colour groups for the main note types. It uses core Obsidian settings only, so no community plugins are needed. It's made for Obsidian desktop; mobile hasn't been tested yet.</p>
+<p><a href="https://kendeepp.gumroad.com/l/huwkwx?utm_source=seo&amp;utm_campaign=nestedtags">Indie Weekly</a> ($39) is a ready-to-open Obsidian vault for indie developers. According to its product page, it has 41 Markdown notes, including a Home dashboard, a getting-started guide, a tag convention note and filled examples, plus 8 templates: weekly review with a next-week plan, ship log, daily log, metrics snapshot, project, idea, decision and experiment. Its tag convention note uses one tag per note type (<code>#weekly</code>, <code>#ship</code>, <code>#project</code>, <code>#decision</code> and so on) and nested <code>#status/active</code>, <code>#status/parked</code> and <code>#status/done</code> tags for the project lifecycle, and the graph comes with colour groups for the main note types. It uses core Obsidian settings only, so no community plugins are needed. It's made for Obsidian desktop; mobile hasn't been tested yet.</p>
 <h2>Sources</h2>
 <ul>
 <li>Obsidian Help, Tags (nested tags, <code>tag:inbox</code> matches <code>#inbox/to-read</code>, case-insensitive, tags property as a list, Bases <code>hasTag</code>): https://help.obsidian.md/tags</li>

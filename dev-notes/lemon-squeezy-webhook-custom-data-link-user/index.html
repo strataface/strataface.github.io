@@ -1,0 +1,306 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Lemon Squeezy Webhook Arrives but No User Is Linked? A custom_data Checklist</title>
+<meta name="description" content="Why a Lemon Squeezy webhook reaches your app but no user gets linked: 404, 419 and redirects, missing meta.custom_data, share links vs API checkouts, string vs number ids, and a safe fallback by verified email.">
+<link rel="canonical" href="https://strataface.github.io/dev-notes/lemon-squeezy-webhook-custom-data-link-user/">
+<style>
+body{font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;max-width:760px;margin:2.5rem auto;padding:0 1.25rem;line-height:1.65;color:#222}
+a{color:#1a5fb4}nav.crumbs{font-size:.9rem;color:#555;margin-bottom:1.5rem}h1{line-height:1.25}h2{margin-top:2.2rem}h3{margin-top:1.6rem}
+p.lead{color:#555;margin-top:0}li{margin:.3rem 0}
+pre{background:#f6f8fa;border:1px solid #e1e4e8;border-radius:6px;padding:.9rem 1rem;overflow-x:auto;font-size:.88rem;line-height:1.45}
+code{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;background:#f6f8fa;padding:.1em .3em;border-radius:4px;font-size:.92em}pre code{background:none;padding:0}
+table{border-collapse:collapse;width:100%;margin:1rem 0;font-size:.93rem;display:block;overflow-x:auto}th,td{border:1px solid #d0d7de;padding:.45rem .6rem;text-align:left;vertical-align:top}th{background:#f6f8fa}
+footer{margin-top:3rem;padding-top:1rem;border-top:1px solid #e1e4e8;font-size:.9rem;color:#555}
+</style>
+</head>
+<body>
+<nav class="crumbs"><a href="/">Strataface</a> › <a href="/dev-notes/">Dev Notes</a> › Lemon Squeezy Webhook Arrives but No User Is Linked? A custom_data Checklist</nav>
+<article>
+<h1>Lemon Squeezy Webhook Arrives but No User Is Linked? A custom_data Checklist</h1>
+<p>A customer pays, Lemon Squeezy shows the order, and your database stays empty, or it has a subscription row that belongs to nobody. The signature check passes (if it doesn't, fix that first: <a href="https://strataface.github.io/dev-notes/lemon-squeezy-webhook-invalid-signature/">Lemon Squeezy webhook "invalid signature" checklist</a>). The problem is one step later: either the request never reaches your handler, or it arrives without anything that tells you which of your users bought. This checklist covers both, in the order that's quickest to rule out.</p>
+<h2>Quick reference</h2>
+<table>
+<thead>
+<tr>
+<th>What you see</th>
+<th>Most likely cause</th>
+<th>Check</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Webhook log shows 404 or 405</td>
+<td>URL path doesn't match your route</td>
+<td>2</td>
+</tr>
+<tr>
+<td>Webhook log shows 419 (Laravel)</td>
+<td>CSRF protection on the webhook route</td>
+<td>2</td>
+</tr>
+<tr>
+<td>Your server logs a GET with an empty body</td>
+<td>A redirect in front of the route</td>
+<td>2</td>
+</tr>
+<tr>
+<td>Nothing in the log for that purchase</td>
+<td>Event not selected, or test/live mismatch</td>
+<td>3</td>
+</tr>
+<tr>
+<td>Payload has no <code>meta.custom_data</code></td>
+<td>Checkout started from a link without custom data</td>
+<td>4</td>
+</tr>
+<tr>
+<td><code>custom_data</code> is there but the lookup fails</td>
+<td>Wrong place or wrong type (<code>"123"</code> vs <code>123</code>)</td>
+<td>5</td>
+</tr>
+<tr>
+<td>Renewal events can't find a user</td>
+<td>Invoice events carry a subscription id, not your user</td>
+<td>5</td>
+</tr>
+<tr>
+<td>Laravel: "Webhook skipped due to invalid custom data."</td>
+<td>Purchase didn't start from the package's checkout</td>
+<td>8</td>
+</tr>
+</tbody>
+</table>
+<h2>☐ 1. Read the webhook log before changing code</h2>
+<p>Lemon Squeezy logs recent webhooks on the webhooks settings page. The docs say you can see "which events have been sent, the full payloads of each request and also resend webhooks". Open the delivery for the purchase you're debugging and note two things:</p>
+<ul>
+<li><strong>The response your server returned.</strong> A 200 means your handler ran and accepted it; anything else points to check 2.</li>
+<li><strong>Whether <code>meta.custom_data</code> is in the payload.</strong> If it isn't there, no handler code can find it (check 4).</li>
+</ul>
+<p>Lemon Squeezy needs a 200 back. Any other status is retried "up to three more times using an exponential backoff strategy (e.g. 5 secs, 25 secs, 125 secs)", and then the delivery counts as failed. Fix the cause, then resend from the log.</p>
+<p>Sources: <a href="https://docs.lemonsqueezy.com/help/webhooks">Webhooks</a>, <a href="https://docs.lemonsqueezy.com/help/webhooks/webhook-requests">Webhook Requests</a>.</p>
+<h2>☐ 2. Make sure the POST reaches your handler</h2>
+<p><strong>404 or 405.</strong> The callback URL must match a route that accepts POST, character for character. With the Lemon Squeezy for Laravel package, the route ships with the package and its README says the path "is <code>/lemon-squeezy/webhook</code> by default". <code>php artisan route:list</code> shows whether it's registered in your app.</p>
+<p><strong>419 on Laravel.</strong> Laravel turns a CSRF token mismatch into an HTTP 419 response, and Lemon Squeezy can't send a CSRF token. Laravel's CSRF docs describe excluding webhook routes for exactly this reason. On Laravel 11 and later:</p>
+<pre><code class="language-php">// bootstrap/app.php
+-&gt;withMiddleware(function (Middleware $middleware) {
+    $middleware-&gt;validateCsrfTokens(except: [
+        'lemon-squeezy/*', // or the path of your own webhook route
+    ]);
+})
+</code></pre>
+<p>On older versions, add the same path to <code>$except</code> in <code>App\Http\Middleware\VerifyCsrfToken</code>.</p>
+<p><strong>A GET with an empty body.</strong> This is a redirect. HTTP allows a client that follows a 301 or 302 to switch the request from POST to GET: RFC 9110 says "For historical reasons, a user agent MAY change the request method from POST to GET for the subsequent request." The body is lost on the way. Common sources:</p>
+<ul>
+<li>A trailing-slash rule. Django's <code>APPEND_SLASH</code> (on by default) redirects <code>/webhook</code> to <code>/webhook/</code> when only the slashed pattern exists, and Django's docs warn that "the redirect may cause any data submitted in a POST request to be lost". One Stack Overflow question about Lemon Squeezy webhooks arriving as GET was solved exactly this way.</li>
+<li><code>http://</code> to <code>https://</code>, or <code>example.com</code> to <code>www.example.com</code>.</li>
+</ul>
+<p>Fix: enter the final URL in the webhook settings, with the exact scheme, host and trailing slash your route uses, so nothing has to redirect.</p>
+<p>Note: Lemon Squeezy's docs don't say how its sender treats redirects. The fix above avoids the question.</p>
+<p>Sources: <a href="https://github.com/lmsqueezy/laravel">Lemon Squeezy for Laravel README</a>, <a href="https://laravel.com/docs/12.x/csrf">Laravel CSRF Protection</a>, <a href="https://github.com/laravel/framework/blob/12.x/src/Illuminate/Foundation/Exceptions/Handler.php">Laravel exception handler (419 mapping)</a>, <a href="https://www.rfc-editor.org/rfc/rfc9110#section-15.4">RFC 9110 §15.4</a>, <a href="https://docs.djangoproject.com/en/5.2/ref/settings/#append-slash">Django APPEND_SLASH</a>.</p>
+<h2>☐ 3. Is the webhook subscribed to the right events and mode?</h2>
+<ul>
+<li>A webhook only fires for the events you selected when you created it. For a subscription app, Lemon Squeezy's recommended minimum is <code>subscription_created</code>, <code>subscription_payment_success</code> and <code>subscription_updated</code>; for one-time products, <code>order_created</code>. If you sell license keys through Lemon Squeezy itself, <code>license_key_created</code> is a separate event.</li>
+<li><code>subscription_created</code> always comes with an <code>order_created</code>, and the docs call <code>subscription_updated</code> a "catch-all" for the latest subscription data. If you only handle one subscription event, handle that one.</li>
+<li>Test-mode and live-mode webhooks are separate: "a test mode webhook will only be triggered for test mode data and vice versa".</li>
+</ul>
+<p>Sources: <a href="https://docs.lemonsqueezy.com/help/webhooks/event-types">Event Types</a>, <a href="https://docs.lemonsqueezy.com/help/webhooks/simulate-webhook-events">Simulate Webhook Events</a>.</p>
+<h2>☐ 4. Is <code>meta.custom_data</code> in the payload at all?</h2>
+<p>Lemon Squeezy doesn't know who your users are. It only sends back what you passed into the checkout. There are two ways to pass it, and both end up in <code>meta.custom_data</code>:</p>
+<p><strong>Checkout link with query parameters:</strong></p>
+<pre><code class="language-text">https://[STORE].lemonsqueezy.com/checkout/buy/[VARIANT_ID]?checkout[custom][user_id]=123
+</code></pre>
+<p><strong>Checkout created through the API</strong>, with <code>checkout_data.custom</code>:</p>
+<pre><code class="language-ts">const res = await fetch(&quot;https://api.lemonsqueezy.com/v1/checkouts&quot;, {
+  method: &quot;POST&quot;,
+  headers: {
+    Accept: &quot;application/vnd.api+json&quot;,
+    &quot;Content-Type&quot;: &quot;application/vnd.api+json&quot;,
+    Authorization: `Bearer ${process.env.LEMONSQUEEZY_API_KEY}`,
+  },
+  body: JSON.stringify({
+    data: {
+      type: &quot;checkouts&quot;,
+      attributes: {
+        checkout_data: { email: user.email, custom: { user_id: String(user.id) } },
+      },
+      relationships: {
+        store: { data: { type: &quot;stores&quot;, id: STORE_ID } },
+        variant: { data: { type: &quot;variants&quot;, id: VARIANT_ID } },
+      },
+    },
+  }),
+});
+const checkoutUrl = (await res.json()).data.attributes.url;
+</code></pre>
+<p>So when <code>custom_data</code> is missing, ask how that particular buyer reached the checkout:</p>
+<ul>
+<li><strong>A plain share link</strong> copied from the dashboard, a "Buy" button pasted into a landing page, or your Lemon Squeezy storefront. None of these carry your user id unless you added <code>checkout[custom][...]</code> yourself.</li>
+<li><strong>A cart URL.</strong> When a buyer opens a <code>/checkout/buy/</code> link, it turns into a <code>/checkout/?cart=</code> URL that is "unique to that customer and single-use only". Always share the original <code>/checkout/buy/</code> link.</li>
+<li><strong>An API checkout created without <code>custom</code></strong>, for example a code path that builds the checkout before the user has signed in.</li>
+</ul>
+<p>Note: one comment in lmsqueezy/laravel#57 tentatively traces purchases without the expected custom data to Lemon Squeezy's recovered-cart emails, and suspects the default storefront as well. The docs don't confirm this either way. If you rely on custom data, check those payloads in the log.</p>
+<p>Sources: <a href="https://docs.lemonsqueezy.com/help/checkout/passing-custom-data">Passing Custom Data</a>, <a href="https://docs.lemonsqueezy.com/guides/developer-guide/taking-payments">Taking Payments</a>, <a href="https://docs.lemonsqueezy.com/api/checkouts/create-checkout">Create a Checkout</a>.</p>
+<h2>☐ 5. Read it from the right place, as the right type</h2>
+<ul>
+<li><strong>Place.</strong> It's <code>meta.custom_data.user_id</code>, not <code>data.attributes</code>.</li>
+<li><strong>Which events.</strong> The docs say <code>custom_data</code> is included in "all Order, Subscription and License key related events".</li>
+<li><strong>Type.</strong> The docs show the same value as a number in one example (<code>"user_id": 123</code>) and as a string in another (<code>"user_id": "123"</code>). Don't depend on either: convert to a string before you look the user up, and if your primary keys are integers, parse and validate it.</li>
+<li><strong>Renewals and payment events.</strong> <code>subscription_payment_success</code>, <code>_failed</code>, <code>_recovered</code> and <code>_refunded</code> send a <strong>subscription invoice</strong> object. Its attributes include <code>subscription_id</code> and <code>customer_id</code>. Link those events through the subscription you stored at <code>subscription_created</code>, not through <code>custom_data</code>.</li>
+</ul>
+<p>Note: the docs don't say explicitly whether invoice events include <code>custom_data</code>. Linking through <code>subscription_id</code> works either way.</p>
+<p>Sources: <a href="https://docs.lemonsqueezy.com/help/webhooks/webhook-requests">Webhook Requests</a>, <a href="https://docs.lemonsqueezy.com/help/webhooks/event-types">Event Types</a>, <a href="https://docs.lemonsqueezy.com/api/subscription-invoices/the-subscription-invoice-object">The Subscription Invoice Object</a>.</p>
+<h2>☐ 6. Have a fallback when there's no user id</h2>
+<p>Some purchases will arrive without your id (check 4). Don't drop them, and don't return an error that makes Lemon Squeezy retry a payload that will never change. Save the record unlinked and match it later.</p>
+<p>Order and subscription objects both include <code>user_email</code> and <code>customer_id</code>. Lemon Squeezy's guide recommends storing the subscription <code>id</code>, <code>order_id</code>, <code>customer_id</code>, <code>product_id</code> and <code>variant_id</code>.</p>
+<pre><code class="language-ts">type LsEvent = {
+  meta: { event_name: string; custom_data?: Record&lt;string, unknown&gt; };
+  data: { type: string; id: string; attributes: Record&lt;string, any&gt; };
+};
+
+// Returns the local user for an order or subscription event, or null.
+async function resolveUser(evt: LsEvent, db: Db) {
+  const raw = evt.meta.custom_data?.user_id;
+  if (raw !== undefined &amp;&amp; raw !== null &amp;&amp; raw !== &quot;&quot;) {
+    const user = await db.findUserById(String(raw));
+    if (user) return user;
+  }
+  const email = String(evt.data.attributes.user_email ?? &quot;&quot;).trim().toLowerCase();
+  if (!email) return null;
+  const user = await db.findUserByEmail(email);
+  // Only trust an email match if your app has verified that this user owns the address.
+  return user?.emailVerified ? user : null;
+}
+
+// In the handler, after the signature check:
+const user = await resolveUser(evt, db);
+await db.upsertSubscription({
+  lsId: evt.data.id,
+  userId: user?.id ?? null,               // null = unlinked; keep it
+  customerEmail: evt.data.attributes.user_email,
+  customerId: String(evt.data.attributes.customer_id),
+  status: evt.data.attributes.status,
+});
+return new Response(&quot;OK&quot;, { status: 200 });
+
+// Later, after sign-in (not at sign-up), once the email is verified:
+async function attachUnlinked(user: { id: string; email: string; emailVerified: boolean }, db: Db) {
+  if (!user.emailVerified) return 0;
+  return db.linkSubscriptionsByEmail(user.email.trim().toLowerCase(), user.id); // only rows with userId = null
+}
+</code></pre>
+<p>Then, when someone signs in with that email and your app has verified they own it, attach any unlinked subscriptions to them.</p>
+<ul>
+<li>Buyers sometimes pay with a different email from the one they signed up with. Keep a way to link by hand, for example an admin action or a "claim with order number" form.</li>
+<li>Normalise case on both sides before you compare emails. Note: whether your database compares strings case-sensitively depends on the database and collation.</li>
+</ul>
+<h2>☐ 7. Don't treat a user id from a public link as proof</h2>
+<p>The signature proves the request came from Lemon Squeezy. It doesn't prove who the buyer is in your app. Whoever opens a checkout link can edit its query string first, <code>checkout[custom][user_id]</code> included.</p>
+<ul>
+<li>For signed-in users, create the checkout on your server through the API, using the id from the session (check 4). The browser never chooses the id.</li>
+<li>If you do use links, treat the id as a hint. Confirm that the user exists, and consider requiring the purchase email to match before you grant anything sensitive.</li>
+</ul>
+<h2>☐ 8. Laravel package: "Webhook skipped due to invalid custom data."</h2>
+<p>The official Lemon Squeezy for Laravel package links purchases through two custom-data keys it sets itself, <code>billable_id</code> and <code>billable_type</code>.</p>
+<ul>
+<li>Its README lists <code>billable_id</code>, <code>billable_type</code> and <code>subscription_type</code> as reserved keywords. Passing them yourself throws an exception.</li>
+<li>In its webhook controller, an <code>order_created</code>, <code>order_refunded</code>, <code>subscription_created</code> or <code>license_key_created</code> event without both keys throws <code>InvalidCustomPayload</code>. In issues #57 and #83 a contributor explains that purchases must start from the package (for example <code>$user-&gt;checkout('variant-id')</code> or <code>$user-&gt;subscribe(...)</code>) for those keys to be present. A share link or a hand-made API checkout won't have them.</li>
+<li>Older versions answered with the text "Webhook skipped due to invalid custom data." In the current source the same case returns HTTP 400, so Lemon Squeezy will retry it and then mark it failed.</li>
+<li>Checkout for guests without a user (issue #86) is an open feature request. Until then, create the user first and start the checkout from the package, or handle those events yourself by listening to the package's <code>WebhookReceived</code> event, which it dispatches before its own handlers run.</li>
+</ul>
+<p>Sources: <a href="https://github.com/lmsqueezy/laravel">Lemon Squeezy for Laravel README</a>, <a href="https://github.com/lmsqueezy/laravel/blob/main/src/Http/Controllers/WebhookController.php">WebhookController.php</a>, <a href="https://github.com/lmsqueezy/laravel/issues/57">issue #57</a>, <a href="https://github.com/lmsqueezy/laravel/issues/83">issue #83</a>, <a href="https://github.com/lmsqueezy/laravel/issues/86">issue #86</a>.</p>
+<h2>☐ 9. Don't rely only on the browser success event</h2>
+<p>With the checkout overlay, Lemon.js fires <code>Checkout.Success</code> and passes it an Order object. That's useful for showing a thank-you state straight away. But the event runs in the buyer's browser, so if the tab closes, your code never sees it. Lemon Squeezy's guide suggests storing subscription data from the <code>subscription_created</code> and <code>subscription_updated</code> webhooks. Use the browser event for the UI, and the webhook as the record.</p>
+<p>Sources: <a href="https://docs.lemonsqueezy.com/help/lemonjs/handling-events">Handling Events with Lemon.js</a>, <a href="https://docs.lemonsqueezy.com/guides/developer-guide/taking-payments">Taking Payments</a>.</p>
+<h2>Symptom table</h2>
+<table>
+<thead>
+<tr>
+<th>Symptom</th>
+<th>Likely cause</th>
+<th>Check</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Order visible in Lemon Squeezy, database empty</td>
+<td>Handler not reached (404/419/redirect)</td>
+<td>1, 2</td>
+</tr>
+<tr>
+<td>Some purchases linked, others not</td>
+<td>Those buyers came through a link without custom data</td>
+<td>4, 6</td>
+</tr>
+<tr>
+<td>Every purchase unlinked after moving to a new checkout button</td>
+<td>New button is a plain share link</td>
+<td>4</td>
+</tr>
+<tr>
+<td>Lookup fails though <code>user_id</code> is in the log</td>
+<td>Read from <code>data.attributes</code>, or number/string mismatch</td>
+<td>5</td>
+</tr>
+<tr>
+<td>Renewals fail to update</td>
+<td>Invoice events handled like subscription events</td>
+<td>5</td>
+</tr>
+<tr>
+<td>Laravel returns 400 to every share-link purchase</td>
+<td>Package needs <code>billable_id</code>/<code>billable_type</code></td>
+<td>8</td>
+</tr>
+<tr>
+<td>Paid users see "no subscription" after closing the tab</td>
+<td>Relying on <code>Checkout.Success</code> only</td>
+<td>9</td>
+</tr>
+</tbody>
+</table>
+<h2>If you're starting a Lemon Squeezy subscription app</h2>
+<p><a href="https://kendeepp.gumroad.com/l/pdaeoo?utm_source=seo&amp;utm_campaign=lscustomdata">Rindstack</a> is a Next.js 15 starter for selling licensed software through Lemon Squeezy, with this linking already wired up. Its product page lists:</p>
+<ul>
+<li>Hosted checkout created through the API with your user id attached.</li>
+<li>A webhook handler that verifies <code>X-Signature</code> over the raw body, skips duplicate deliveries, and doesn't let late out-of-order events overwrite newer state.</li>
+<li>One license key per subscription, issued by the webhook, with device limits per plan (3 / 10 by default), verify/deactivate APIs and a grace period for cancelled subscriptions.</li>
+<li>A customer-portal "Manage billing" link, and a Chrome extension (MV3) example that unlocks with the key.</li>
+<li>English, Chinese and Japanese UI.</li>
+</ul>
+<p>In its source, a webhook links to a user only when the <code>user_id</code> from custom data belongs to an existing user. The dashboard also shows subscriptions whose customer email matches the signed-in user's email, so a purchase made without the id can still appear for the same email. It costs $99 one-time (Personal) or $199 (Team).</p>
+<p>Its listed limits:</p>
+<ul>
+<li>No Stripe, teams, blog, transactional email or admin panel.</li>
+<li>Lemon Squeezy was mocked in all its tests, and the starter hasn't yet been run against a live Lemon Squeezy store. Its guide asks you to do one test-mode purchase before launch.</li>
+<li>The Vercel deployment guide hasn't been deployed by its author.</li>
+</ul>
+<h2>Sources</h2>
+<ul>
+<li>Lemon Squeezy Docs, Passing Custom Data: https://docs.lemonsqueezy.com/help/checkout/passing-custom-data</li>
+<li>Lemon Squeezy Docs, Webhooks: https://docs.lemonsqueezy.com/help/webhooks</li>
+<li>Lemon Squeezy Docs, Webhook Requests: https://docs.lemonsqueezy.com/help/webhooks/webhook-requests</li>
+<li>Lemon Squeezy Docs, Event Types: https://docs.lemonsqueezy.com/help/webhooks/event-types</li>
+<li>Lemon Squeezy Docs, Simulate Webhook Events: https://docs.lemonsqueezy.com/help/webhooks/simulate-webhook-events</li>
+<li>Lemon Squeezy Guides, Taking Payments: https://docs.lemonsqueezy.com/guides/developer-guide/taking-payments</li>
+<li>Lemon Squeezy API, Create a Checkout: https://docs.lemonsqueezy.com/api/checkouts/create-checkout</li>
+<li>Lemon Squeezy API, The Subscription Invoice Object: https://docs.lemonsqueezy.com/api/subscription-invoices/the-subscription-invoice-object</li>
+<li>Lemon Squeezy API, The Subscription Object: https://docs.lemonsqueezy.com/api/subscriptions/the-subscription-object</li>
+<li>Lemon Squeezy Docs, Handling Events with Lemon.js: https://docs.lemonsqueezy.com/help/lemonjs/handling-events</li>
+<li>Lemon Squeezy for Laravel, README: https://github.com/lmsqueezy/laravel</li>
+<li>Lemon Squeezy for Laravel, WebhookController.php: https://github.com/lmsqueezy/laravel/blob/main/src/Http/Controllers/WebhookController.php</li>
+<li>GitHub, lmsqueezy/laravel issues #57, #83, #86: https://github.com/lmsqueezy/laravel/issues/57, https://github.com/lmsqueezy/laravel/issues/83, https://github.com/lmsqueezy/laravel/issues/86</li>
+<li>Laravel Docs, CSRF Protection: https://laravel.com/docs/12.x/csrf</li>
+<li>Laravel framework, Foundation exception handler: https://github.com/laravel/framework/blob/12.x/src/Illuminate/Foundation/Exceptions/Handler.php</li>
+<li>RFC 9110, HTTP Semantics, §15.4 Redirection: https://www.rfc-editor.org/rfc/rfc9110#section-15.4</li>
+<li>Django Docs, APPEND_SLASH: https://docs.djangoproject.com/en/5.2/ref/settings/#append-slash</li>
+<li>Stack Overflow, LemonSqueezy webhook requests coming through as GET instead of POST: https://stackoverflow.com/questions/78058659</li>
+<li>Stack Overflow, Getting 404 on post request for Lemon squeezy Integration in a Laravel app: https://stackoverflow.com/questions/77851667</li>
+</ul>
+<p>Note: code samples follow the current docs listed above. Framework defaults change between versions, so check the docs for the version you use.</p>
+</article>
+<footer><a href="/">Strataface</a> · <a href="/spreadsheet-guides/">Spreadsheet Guides</a> · <a href="/dev-notes/">Dev Notes</a> · <a href="/obsidian-guides/">Obsidian Guides</a> · <a href="/blender-bake-guides/">Blender Bake Guides</a></footer>
+</body>
+</html>
